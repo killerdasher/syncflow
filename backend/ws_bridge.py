@@ -103,7 +103,8 @@ class WebSocketBridge:
         data = json.dumps(message)
         disconnected = set()
 
-        for client in self.clients:
+        # Snapshot: clients may join/leave while we await sends
+        for client in list(self.clients):
             try:
                 await client.send(data)
             except Exception:

@@ -146,6 +146,7 @@ class TransferChain:
         """Compact manifest: per-block verification happens at receive time,
         so only aggregate hashes travel on the wire (no per-block dump)."""
         return {
+            "type": "file_manifest",
             "transferId": self.transfer_id,
             "fileName": self.file_name,
             "senderPubkey": self.sender_pubkey,

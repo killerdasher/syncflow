@@ -25,16 +25,15 @@ class TCPServer:
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info("peername")
         try:
-            if self._sem.locked():
-                try:
-                    await asyncio.wait_for(self._sem.acquire(), CONN_WAIT_TIMEOUT)
-                except asyncio.TimeoutError:
-                    print(f"Rejected connection from {addr}: at capacity", flush=True)
-                    writer.close()
-                    await writer.wait_closed()
-                    return
-            else:
-                self._sem.acquire_nowait()
+            try:
+                # Non-blocking when capacity is free (acquire resumes inline);
+                # waits briefly when full, then rejects.
+                await asyncio.wait_for(self._sem.acquire(), CONN_WAIT_TIMEOUT)
+            except asyncio.TimeoutError:
+                print(f"Rejected connection from {addr}: at capacity", flush=True)
+                writer.close()
+                await writer.wait_closed()
+                return
 
             try:
                 print(f"TCP connection from {addr}", flush=True)
@@ -44,7 +43,10 @@ class TCPServer:
                 print(f"Connection handler error from {addr}: {type(e).__name__}: {safe}", flush=True)
             finally:
                 self._sem.release()
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"Connection setup error from {addr}: {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
             try:
                 writer.close()
                 await writer.wait_closed()

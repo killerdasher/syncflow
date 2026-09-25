@@ -86,6 +86,7 @@ class TransferTask:
         self.from_device: Optional[str] = None
         self.to_device: Optional[str] = None
         self.expected_device_id: Optional[str] = None
+        self.declared_id: Optional[str] = None
         self._last_emit = 0.0
         self._writer: Optional[asyncio.StreamWriter] = None
 
@@ -129,6 +130,17 @@ class TransferEngine:
         self._receive_dir = path
         os.makedirs(self._receive_dir, exist_ok=True)
 
+    def set_progress_callback(self, callback: Callable):
+        self._progress_callback = callback
+
+    async def _emit(self, task: "TransferTask"):
+        """Progress/display failures must never fail or abort a transfer."""
+        if self._progress_callback:
+            try:
+                await self._progress_callback(task)
+            except Exception:
+                pass
+
     def set_approval(self, enabled: bool):
         self.require_approval = enabled
 
@@ -154,8 +166,7 @@ class TransferEngine:
         fut: asyncio.Future = loop.create_future()
         self._pending_approvals[task.id] = fut
         task.status = "awaiting"
-        if self._progress_callback:
-            await self._progress_callback(task)
+        await self._emit(task)
         try:
             done, _ = await asyncio.wait({fut}, timeout=timeout)
             if not done:
@@ -296,7 +307,7 @@ class TransferEngine:
                 "transferId": task.id,
                 "senderName": san(self.device_name, 64),
                 "files": [
-                    {"name": os.path.basename(f["name"]), "size": f["size"]}
+                    {"name": sanitize_filename(os.path.basename(f["name"])), "size": f["size"]}
                     for f in task.files
                 ],
             }
@@ -361,7 +372,9 @@ class TransferEngine:
     async def _send_file(self, reader, writer, file_info: dict, task: TransferTask, session: SessionCrypto):
         file_path = file_info["path"]
         file_size = file_info["size"]
-        file_name = os.path.basename(file_info["name"])
+        # Same canonical name the receiver will derive: signed headers,
+        # metadata and the on-disk name must all agree.
+        file_name = sanitize_filename(os.path.basename(file_info["name"]))
 
         chain = TransferChain(task.id, file_name, self.identity.signing_pub_b64)
 
@@ -397,9 +410,9 @@ class TransferEngine:
                 if elapsed > 0:
                     task.speed = task.bytes_transferred / elapsed
 
-                if self._progress_callback and time.time() - task._last_emit > 0.25:
+                if time.time() - task._last_emit > 0.25:
                     task._last_emit = time.time()
-                    await self._progress_callback(task)
+                    await self._emit(task)
 
         await self._write_enc(writer, session, chain.wire_manifest(), STREAM_TIMEOUT, MAX_META_BLOB)
         task.chains.append(chain.wire_manifest())
@@ -527,10 +540,13 @@ class TransferEngine:
             transfer_id = str(meta.get("transferId", ""))
             if not TRANSFER_ID_RE.match(transfer_id):
                 transfer_id = str(uuid.uuid4())
-            # Namespace received ids so they can never collide with local sends
+            # Unique receive id: sender's id is only advisory (never trusted
+            # for bookkeeping), so concurrent receives can never collide and
+            # received ids can never clash with local send ids.
             task = TransferTask(
-                files, target_ip=src_ip, transfer_id=f"in-{transfer_id}"
+                files, target_ip=src_ip, transfer_id=f"in-{uuid.uuid4().hex[:16]}"
             )
+            task.declared_id = transfer_id
             task.from_device = sender_name
             task.to_device = "This Device"
             task.verified = False
@@ -591,20 +607,27 @@ class TransferEngine:
         except IntegrityError as e:
             print(f"Integrity failure from {src_ip}: {san(e, 160)}", flush=True)
             if task:
-                task.status = "failed"
-                task.error = san(e)
-                task.verified = False
+                if task._cancelled:
+                    task.status = "cancelled"
+                else:
+                    task.status = "failed"
+                    task.error = san(e)
+                    task.verified = False
         except asyncio.TimeoutError:
             if task:
-                task.status = "failed"
-                task.error = "Connection timed out"
+                task.status = "cancelled" if task._cancelled else "failed"
+                if task.status == "failed":
+                    task.error = "Connection timed out"
             else:
                 print(f"Handshake timeout from {src_ip}", flush=True)
         except Exception as e:
             print(f"Receive error from {src_ip}: {type(e).__name__}: {san(e, 160)}", flush=True)
             if task:
-                task.status = "failed"
-                task.error = san(e) or "Transfer failed"
+                if task._cancelled:
+                    task.status = "cancelled"
+                else:
+                    task.status = "failed"
+                    task.error = san(e) or "Transfer failed"
         finally:
             if task:
                 task.end_time = task.end_time or time.time()
@@ -693,7 +716,7 @@ class TransferEngine:
         try:
             with open(tmp_path, "wb") as out:
                 while True:
-                    blob = await self._read_blob(reader, session, STREAM_TIMEOUT, MAX_FRAME_BLOB)
+                    blob = await self._read_blob(reader, STREAM_TIMEOUT, MAX_FRAME_BLOB)
                     try:
                         frame = json.loads(session.decrypt(blob))
                     except Exception:
@@ -707,7 +730,7 @@ class TransferEngine:
                     if "header" not in frame:
                         raise IntegrityError("unexpected message in file stream")
 
-                    data_blob = await self._read_blob(reader, session, STREAM_TIMEOUT, MAX_CHUNK_BLOB)
+                    data_blob = await self._read_blob(reader, STREAM_TIMEOUT, MAX_CHUNK_BLOB)
                     try:
                         chunk = session.decrypt(data_blob)
                     except Exception:
@@ -740,8 +763,7 @@ class TransferEngine:
                         last_emit = now
                         task._last_emit = now
                         task.speed = task.bytes_transferred / max(now - task.start_time, 0.001)
-                        if self._progress_callback:
-                            await self._progress_callback(task)
+                        await self._emit(task)
 
             # Full verification before the file becomes visible
             if received != expected_size:
@@ -800,12 +822,15 @@ class TransferEngine:
     def cancel_transfer(self, transfer_id: str) -> bool:
         task = self.active_transfers.get(transfer_id)
         if task:
+            prev_status = task.status
             task._cancelled = True
             task.status = "cancelled"
             fut = self._pending_approvals.get(transfer_id)
             if fut and not fut.done():
                 fut.set_result("declined")
-            if task._writer:
+            # Close the socket only while data streams; during approval keep
+            # it open so the receive loop can deliver a clean decline.
+            if task._writer and prev_status not in ("pending", "awaiting"):
                 try:
                     task._writer.close()
                 except Exception:
