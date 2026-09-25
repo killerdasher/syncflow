@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { motion } from 'framer-motion'
 import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -19,7 +20,7 @@ const fileIconMap: Record<string, any> = {
   'video/avi': FileVideo,
 }
 
-export function TransferCard({ transfer }: TransferCardProps) {
+export const TransferCard = memo(function TransferCard({ transfer }: TransferCardProps) {
   const cancelTransfer = useTransferStore((s) => s.cancelTransfer)
   const addTransfer = useTransferStore((s) => s.addTransfer)
 
@@ -170,4 +171,4 @@ export function TransferCard({ transfer }: TransferCardProps) {
       </div>
     </motion.div>
   )
-}
+})

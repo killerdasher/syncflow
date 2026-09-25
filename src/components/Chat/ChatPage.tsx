@@ -7,12 +7,17 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import type { ChatMessage } from '../../lib/types'
 
 const REAL_HASH = /^[0-9a-f]{16,}$/i
+const EARLY_PAGE = 100
 
 export function ChatPage() {
   const [input, setInput] = useState('')
+  const [showEarlier, setShowEarlier] = useState(false)
   const messages = useChatStore((s) => s.messages)
   const settings = useSettingsStore((s) => s.settings)
   const bottomRef = useRef<HTMLDivElement>(null)
+
+  const hiddenCount = !showEarlier && messages.length > EARLY_PAGE ? messages.length - EARLY_PAGE : 0
+  const visible = hiddenCount ? messages.slice(hiddenCount) : messages
 
   useEffect(() => {
     if (window.electronAPI) {
@@ -84,8 +89,18 @@ export function ChatPage() {
             <p className="text-xs text-frost-400 mt-1">Messages are relayed to paired devices on your network</p>
           </div>
         )}
+        {hiddenCount > 0 && (
+          <div className="text-center mb-3">
+            <button
+              onClick={() => setShowEarlier(true)}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium text-frost-300 hover:text-frost-100 bg-white/5 hover:bg-white/10 border border-white/5 transition-all"
+            >
+              Show {hiddenCount} earlier message{hiddenCount !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
         <AnimatePresence initial={false}>
-          {messages.map((msg) => (
+          {visible.map((msg) => (
             <motion.div
               key={msg.id}
               initial={{ opacity: 0, y: 10, scale: 0.98 }}

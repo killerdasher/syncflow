@@ -14,8 +14,11 @@ const filters: { id: FilterType; label: string; icon: any }[] = [
   { id: 'failed', label: 'Failed', icon: XCircle },
 ]
 
+const PAGE_SIZE = 60
+
 export function TransferList() {
   const [filter, setFilter] = useState<FilterType>('all')
+  const [showOlder, setShowOlder] = useState(false)
   const transfers = useTransferStore((s) => s.transfers)
 
   const filtered = transfers.filter((t) => {
@@ -26,9 +29,17 @@ export function TransferList() {
     return true
   })
 
-  const activeCount = transfers.filter((t) => t.status === 'transferring').length
-  const completedCount = transfers.filter((t) => t.status === 'completed').length
-  const failedCount = transfers.filter((t) => t.status === 'failed').length
+  let activeCount = 0
+  let completedCount = 0
+  let failedCount = 0
+  for (const t of transfers) {
+    if (t.status === 'transferring') activeCount++
+    else if (t.status === 'completed') completedCount++
+    else if (t.status === 'failed') failedCount++
+  }
+
+  const hiddenCount = !showOlder && filtered.length > PAGE_SIZE ? filtered.length - PAGE_SIZE : 0
+  const visible = hiddenCount ? filtered.slice(0, PAGE_SIZE) : filtered
 
   return (
     <div>
@@ -45,7 +56,10 @@ export function TransferList() {
         {filters.map((f) => (
           <button
             key={f.id}
-            onClick={() => setFilter(f.id)}
+            onClick={() => {
+              setFilter(f.id)
+              setShowOlder(false)
+            }}
             className={clsx(
               'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200',
               filter === f.id
@@ -61,7 +75,7 @@ export function TransferList() {
 
       <div className="space-y-3">
         <AnimatePresence mode="popLayout">
-          {filtered.length === 0 ? (
+          {visible.length === 0 ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -71,11 +85,19 @@ export function TransferList() {
               <p className="text-frost-300">No transfers to show</p>
             </motion.div>
           ) : (
-            filtered.map((transfer) => (
+            visible.map((transfer) => (
               <TransferCard key={transfer.id} transfer={transfer} />
             ))
           )}
         </AnimatePresence>
+        {hiddenCount > 0 && (
+          <button
+            onClick={() => setShowOlder(true)}
+            className="w-full py-2.5 rounded-xl text-xs font-medium text-frost-300 hover:text-frost-100 bg-white/5 hover:bg-white/10 border border-white/5 transition-all"
+          >
+            Show {hiddenCount} older transfer{hiddenCount !== 1 ? 's' : ''}
+          </button>
+        )}
       </div>
     </div>
   )

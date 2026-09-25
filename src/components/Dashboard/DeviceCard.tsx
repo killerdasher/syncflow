@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { motion } from 'framer-motion'
 import { Monitor, Laptop, Smartphone, Tablet, HelpCircle, Send, Wifi, WifiOff, X } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -20,7 +21,7 @@ const iconMap = {
   unknown: HelpCircle,
 }
 
-export function DeviceCard({ device, onSend, isSelected, onSelect }: DeviceCardProps) {
+export const DeviceCard = memo(function DeviceCard({ device, onSend, isSelected, onSelect }: DeviceCardProps) {
   const Icon = iconMap[device.icon] ?? HelpCircle
   const isConnected = device.status === 'connected'
   const removeDevice = useDeviceStore((s) => s.removeDevice)
@@ -125,4 +126,4 @@ export function DeviceCard({ device, onSend, isSelected, onSelect }: DeviceCardP
       )}
     </motion.div>
   )
-}
+})
