@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "description": "Cross-device file sync application",
   "main": "./out/main/index.js",
-  "author": "SyncFlow",
+  "author": {
+    "name": "SyncFlow",
+    "email": "dasher@localhost"
+  },
+  "homepage": "file:///home/dasher/Desktop/my app/syncflow/README.md",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
@@ -47,15 +51,27 @@
       "buildResources": "build"
     },
     "files": [
-      "out/**/*",
-      "backend/**/*",
-      "!**/*.pyc",
-      "!**/__pycache__"
+      "out/**/*"
     ],
     "extraResources": [
       {
         "from": "backend",
-        "to": "backend"
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!venv/bin/pip*",
+          "!venv/bin/activate*",
+          "!venv/bin/websockets*",
+          "!venv/bin/watchmedo*",
+          "!venv/bin/qr*",
+          "!venv/bin/idna*",
+          "!venv/bin/cffi-gen-src",
+          "!venv/lib/*/site-packages/pip*",
+          "!venv/lib/*/site-packages/setuptools*",
+          "!venv/lib/*/site-packages/pkg_resources*"
+        ]
       }
     ],
     "linux": {
@@ -63,7 +79,9 @@
         "AppImage",
         "deb"
       ],
-      "category": "Utility"
+      "category": "Utility",
+      "maintainer": "SyncFlow <dasher@localhost>",
+      "synopsis": "Cross-device E2E file sync and chat"
     },
     "win": {
       "target": [
