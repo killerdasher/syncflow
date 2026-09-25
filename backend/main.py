@@ -40,6 +40,8 @@ class SyncFlowBackend:
         self.ws_bridge.on("chat:history", self._handle_chat_history)
         self.ws_bridge.on("identity:get", self._handle_identity)
         self.ws_bridge.on("settings:apply", self._handle_settings)
+        self.ws_bridge.on("transfer:approve", self._handle_approval)
+        self.ws_bridge.on("transfer:decline", self._handle_approval)
 
     async def _handle_identity(self, data: dict) -> dict:
         return {
@@ -126,16 +128,36 @@ class SyncFlowBackend:
     async def _handle_chat_history(self, data: dict) -> dict:
         return {"type": "chat:history", "messages": self._message_log[-100:]}
 
+    async def _handle_approval(self, data: dict) -> dict:
+        transfer_id = data.get("transferId", "")
+        approve = data.get("type") == "transfer:approve"
+        handler = self.transfer_engine.approve_transfer if approve else self.transfer_engine.decline_transfer
+        success = handler(transfer_id)
+        return {
+            "type": "transfer:decision",
+            "transferId": transfer_id,
+            "approved": approve,
+            "success": success,
+        }
+
     async def _handle_settings(self, data: dict) -> Optional[dict]:
         path = data.get("downloadPath")
+        auto_accept = data.get("autoAccept")
+        reply: dict = {"type": "settings:applied"}
+
+        if auto_accept is not None:
+            self.transfer_engine.set_approval(not bool(auto_accept))
+            reply["autoAccept"] = bool(auto_accept)
+
         if path:
             try:
                 expanded = os.path.expanduser(path)
                 self.transfer_engine.set_receive_dir(expanded)
-                return {"type": "settings:applied", "downloadPath": expanded}
+                reply["downloadPath"] = expanded
             except OSError as e:
                 return {"type": "error", "error": f"Invalid download path: {e}"}
-        return None
+
+        return reply if len(reply) > 1 else None
 
     async def _on_transfer_progress(self, task):
         if self.ws_bridge and self.ws_bridge.loop:

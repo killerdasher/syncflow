@@ -5,7 +5,7 @@ interface ProgressRingProps {
   progress: number
   size?: number
   strokeWidth?: number
-  status?: 'transferring' | 'completed' | 'failed' | 'pending' | 'cancelled'
+  status?: 'transferring' | 'completed' | 'failed' | 'pending' | 'cancelled' | 'awaiting'
 }
 
 export function ProgressRing({
@@ -24,6 +24,7 @@ export function ProgressRing({
     failed: 'stroke-red-400',
     pending: 'stroke-frost-400',
     cancelled: 'stroke-frost-400',
+    awaiting: 'stroke-amber-400',
   }
 
   const bgColorMap: Record<string, string> = {
@@ -32,6 +33,7 @@ export function ProgressRing({
     failed: 'stroke-red-400/10',
     pending: 'stroke-frost-400/10',
     cancelled: 'stroke-frost-400/10',
+    awaiting: 'stroke-amber-400/10',
   }
 
   return (

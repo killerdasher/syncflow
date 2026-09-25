@@ -16,7 +16,7 @@ export interface Transfer {
   fromDevice: string
   toDevice: string
   files: FileItem[]
-  status: 'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled'
+  status: 'pending' | 'awaiting' | 'transferring' | 'completed' | 'failed' | 'cancelled'
   progress: number
   speed: number
   bytesTransferred: number

@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { motion } from 'framer-motion'
-import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban } from 'lucide-react'
+import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban, Clock } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Transfer } from '../../lib/types'
 import { formatBytes, formatSpeed, formatDuration } from '../../lib/constants'
@@ -25,6 +25,7 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
   const addTransfer = useTransferStore((s) => s.addTransfer)
 
   const isActive = transfer.status === 'transferring' || transfer.status === 'pending'
+  const isAwaiting = transfer.status === 'awaiting'
   const isCompleted = transfer.status === 'completed'
   const isFailed = transfer.status === 'failed'
   const isCancelled = transfer.status === 'cancelled'
@@ -61,6 +62,18 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
     })
   }
 
+  const handleApprove = async () => {
+    if (window.electronAPI) {
+      await window.electronAPI.send({ type: 'transfer:approve', transferId: transfer.id })
+    }
+  }
+
+  const handleDecline = async () => {
+    if (window.electronAPI) {
+      await window.electronAPI.send({ type: 'transfer:decline', transferId: transfer.id })
+    }
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -70,6 +83,7 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
       className={clsx(
         'glass-card p-4 transition-all duration-300',
         isActive && 'border-cyber-teal/30 shadow-glow',
+        isAwaiting && 'border-amber-400/40 shadow-glow',
         isCompleted && 'border-green-500/20',
         isFailed && 'border-red-500/20',
         isCancelled && 'border-white/10'
@@ -93,6 +107,26 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
             </div>
 
             <div className="flex items-center gap-1 ml-2">
+              {isAwaiting && (
+                <>
+                  <button
+                    onClick={handleApprove}
+                    aria-label="Accept transfer"
+                    title="Accept transfer"
+                    className="w-7 h-7 flex items-center justify-center rounded-lg text-green-400 hover:bg-green-500/10 transition-colors"
+                  >
+                    <Check size={12} />
+                  </button>
+                  <button
+                    onClick={handleDecline}
+                    aria-label="Decline transfer"
+                    title="Decline transfer"
+                    className="w-7 h-7 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/10 transition-colors"
+                  >
+                    <X size={12} />
+                  </button>
+                </>
+              )}
               {isActive && (
                 <button
                   onClick={handleCancel}
@@ -102,7 +136,7 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
                   <X size={12} />
                 </button>
               )}
-              {(isFailed || isCancelled) && transfer.targetIp && (
+              {(isFailed || isCancelled) && transfer.targetIp && transfer.files.some((f) => f.path) && (
                 <button
                   onClick={handleRetry}
                   aria-label="Retry transfer"
@@ -145,6 +179,13 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
             <div className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
               <AlertCircle size={12} />
               {transfer.error}
+            </div>
+          )}
+
+          {isAwaiting && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-400">
+              <Clock size={12} />
+              Incoming transfer from {transfer.fromDevice} — waiting for your approval
             </div>
           )}
 

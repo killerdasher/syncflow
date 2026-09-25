@@ -21,7 +21,11 @@ export function SettingsPage() {
 
   const handleSave = () => {
     if (window.electronAPI) {
-      window.electronAPI.send({ type: 'settings:apply', downloadPath: settings.downloadPath })
+      window.electronAPI.send({
+        type: 'settings:apply',
+        downloadPath: settings.downloadPath,
+        autoAccept: settings.autoAccept,
+      })
     }
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)

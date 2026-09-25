@@ -23,7 +23,7 @@ export function TransferList() {
 
   const filtered = transfers.filter((t) => {
     if (filter === 'all') return true
-    if (filter === 'active') return t.status === 'transferring' || t.status === 'pending'
+    if (filter === 'active') return t.status === 'transferring' || t.status === 'pending' || t.status === 'awaiting'
     if (filter === 'completed') return t.status === 'completed'
     if (filter === 'failed') return t.status === 'failed' || t.status === 'cancelled'
     return true
@@ -33,7 +33,7 @@ export function TransferList() {
   let completedCount = 0
   let failedCount = 0
   for (const t of transfers) {
-    if (t.status === 'transferring') activeCount++
+    if (t.status === 'transferring' || t.status === 'awaiting') activeCount++
     else if (t.status === 'completed') completedCount++
     else if (t.status === 'failed') failedCount++
   }

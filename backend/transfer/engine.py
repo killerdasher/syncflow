@@ -60,11 +60,46 @@ class TransferEngine:
         self._receive_dir = os.path.expanduser("~/Downloads/SyncFlow")
         self.identity = identity or DeviceIdentityKeys()
         self.device_name = device_name
+        self.require_approval = True
+        self._pending_approvals: dict[str, asyncio.Future] = {}
         os.makedirs(self._receive_dir, exist_ok=True)
 
     def set_receive_dir(self, path: str):
         self._receive_dir = path
         os.makedirs(self._receive_dir, exist_ok=True)
+
+    def set_approval(self, enabled: bool):
+        self.require_approval = enabled
+
+    def approve_transfer(self, transfer_id: str) -> bool:
+        fut = self._pending_approvals.get(transfer_id)
+        if fut and not fut.done():
+            fut.set_result(True)
+            return True
+        return False
+
+    def decline_transfer(self, transfer_id: str) -> bool:
+        fut = self._pending_approvals.get(transfer_id)
+        if fut and not fut.done():
+            fut.set_result("declined")
+            return True
+        return False
+
+    async def _request_approval(self, task: "TransferTask", timeout: float = 60.0):
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._pending_approvals[task.id] = fut
+        task.status = "awaiting"
+        if self._progress_callback:
+            await self._progress_callback(task)
+        try:
+            done, _ = await asyncio.wait({fut}, timeout=timeout)
+            if not done:
+                task.error = "Timed out waiting for approval"
+                return "timeout"
+            return fut.result()
+        finally:
+            self._pending_approvals.pop(task.id, None)
 
     def set_progress_callback(self, callback: Callable):
         self._progress_callback = callback
@@ -88,7 +123,6 @@ class TransferEngine:
 
     async def _execute_transfer(self, task: TransferTask):
         try:
-            task.status = "transferring"
             reader, writer = await asyncio.open_connection(task.target_ip, task.target_port)
 
             offer, session = handshake_offer(self.identity)
@@ -104,6 +138,12 @@ class TransferEngine:
             await self._write_msg(writer, offer)
 
             response = await self._read_msg(reader)
+
+            if task._cancelled:
+                writer.close()
+                await writer.wait_closed()
+                return
+
             if response.get("status") != "accepted":
                 task.status = "failed"
                 task.error = response.get("error", "Transfer rejected")
@@ -117,6 +157,8 @@ class TransferEngine:
                 writer.close()
                 await writer.wait_closed()
                 return
+
+            task.status = "transferring"
 
             for file_info in task.files:
                 if task._cancelled:
@@ -218,12 +260,6 @@ class TransferEngine:
         try:
             header = await self._read_msg(reader)
 
-            session = SessionCrypto(self.identity)
-            accept, session = handshake_accept(self.identity, header)
-            accept["status"] = "accepted"
-
-            await self._write_msg(writer, accept)
-
             files = header.get("files", [])
             task = TransferTask(
                 [
@@ -233,11 +269,31 @@ class TransferEngine:
                 target_ip=(writer.get_extra_info("peername") or ("", 0))[0],
                 transfer_id=header.get("transferId") or None,
             )
-            task.status = "transferring"
             task.from_device = header.get("senderName") or "Unknown device"
             task.to_device = "This Device"
             task.verified = True
             self.active_transfers[task.id] = task
+
+            if self.require_approval:
+                decision = await self._request_approval(task)
+                if decision is not True:
+                    if decision == "timeout":
+                        task.status = "failed"
+                        error = task.error or "Timed out waiting for approval"
+                    else:
+                        task.status = "cancelled"
+                        task.error = "Transfer declined by receiver"
+                        error = task.error
+                    task.end_time = time.time()
+                    await self._write_msg(writer, {"status": "declined", "error": error})
+                    return
+
+            accept, session = handshake_accept(self.identity, header)
+            accept["status"] = "accepted"
+
+            await self._write_msg(writer, accept)
+
+            task.status = "transferring"
 
             for file_info in files:
                 await self._receive_file(reader, writer, file_info, session, task)
@@ -350,6 +406,9 @@ class TransferEngine:
         if task:
             task._cancelled = True
             task.status = "cancelled"
+            fut = self._pending_approvals.get(transfer_id)
+            if fut and not fut.done():
+                fut.set_result("declined")
             return True
         return False
 

@@ -3,6 +3,7 @@ import { useDeviceStore } from '../stores/deviceStore'
 import { useTransferStore } from '../stores/transferStore'
 import { useChatStore } from '../stores/chatStore'
 import { useAppStore } from '../stores/appStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import type { ChatMessage, Transfer } from '../lib/types'
 
 export function useWebSocket() {
@@ -136,6 +137,13 @@ export function useWebSocket() {
     window.electronAPI.onStatus(handleStatus)
 
     window.electronAPI.send({ type: 'identity:get' })
+
+    const s = useSettingsStore.getState().settings
+    window.electronAPI.send({
+      type: 'settings:apply',
+      downloadPath: s.downloadPath,
+      autoAccept: s.autoAccept,
+    })
 
     return () => {
       window.electronAPI.removeMessageListener()

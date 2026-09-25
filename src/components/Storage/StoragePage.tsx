@@ -12,7 +12,7 @@ export function StoragePage() {
   const selfLabel = deviceName || 'This Device'
   const completed = transfers.filter((t) => t.status === 'completed')
   const failed = transfers.filter((t) => t.status === 'failed' || t.status === 'cancelled')
-  const active = transfers.filter((t) => t.status === 'transferring' || t.status === 'pending')
+  const active = transfers.filter((t) => t.status === 'transferring' || t.status === 'pending' || t.status === 'awaiting')
 
   const sentBytes = completed
     .filter((t) => t.fromDevice === selfLabel)
