@@ -60,6 +60,23 @@ build-windows.bat
 ```
 Output: `dist\` folder (EXE installer + portable)
 
+## Two-Device LAN Test
+
+1. Connect both machines to the **same network** (same router/Wi-Fi).
+2. Start SyncFlow on both: `./start-dev.sh` (or install the AppImage/deb on the second machine).
+3. Wait ~5s — each dashboard should show the other under **Devices** (mDNS discovery).
+   - Not discovered? Use **Add Device** → enter the peer's name + LAN IP (find it with `hostname -I`).
+4. Click **Send Files** on machine A → pick files → send.
+5. On machine B an amber **approval card** appears — click **✓ Accept** (or ✗ Decline).
+   - Skip prompts permanently: Settings → enable **Auto-accept transfers** → Save.
+6. Verify: transferred file lands in `~/Downloads/SyncFlow/`, card shows **Chain verified**.
+7. Chat tab: messages relay between both, each with a hash badge.
+
+**Ports needed** (allow in firewall): TCP `18974` (transfers), UDP `5353` (mDNS discovery).
+WS `18973` is localhost-only. Packaged builds require `python3` on PATH (3.13 recommended).
+
+**Expected first-run state:** "0 of 0 connected / No devices discovered yet" is normal until a peer is online.
+
 ## Architecture
 
 ```
