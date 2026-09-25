@@ -1,15 +1,69 @@
 import asyncio
-import hashlib
 import json
 import os
+import re
 import time
 import uuid
 from typing import Optional, Callable
 
-from crypto.blockchain import TransferChain
-from crypto.e2e import DeviceIdentityKeys, SessionCrypto, handshake_offer, handshake_accept, handshake_complete
+from crypto.blockchain import TransferChain, sha256_str
+from crypto.e2e import (
+    DeviceIdentityKeys,
+    SessionCrypto,
+    PeerTrustStore,
+    handshake_offer,
+    handshake_accept,
+    handshake_complete,
+)
 
 CHUNK_SIZE = 65536
+
+# Wire limits — every length-prefixed read is bounded (memory-DoS defense)
+MAX_JSON_MSG = 256 * 1024
+MAX_META_BLOB = 256 * 1024
+MAX_FRAME_BLOB = 16 * 1024
+MAX_CHUNK_BLOB = CHUNK_SIZE + 64
+MAX_ACK_BLOB = 16 * 1024
+
+# Timeouts — every socket read is bounded (slow-loris defense)
+CONNECT_TIMEOUT = 10.0
+HDR_TIMEOUT = 30.0
+META_TIMEOUT = 30.0
+DECISION_TIMEOUT = 90.0
+STREAM_TIMEOUT = 120.0
+
+TRANSFER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+CHAT_RATE_LIMIT = 30          # messages per window
+CHAT_RATE_WINDOW = 60.0       # seconds
+
+
+def san(value, limit: int = 512) -> str:
+    """Strip control characters from attacker-influenced strings (log/UI safety)."""
+    text = "" if value is None else str(value)
+    return "".join(ch for ch in text if ch.isprintable())[:limit]
+
+
+def sanitize_filename(name: str) -> str:
+    """Constrain a peer-supplied filename to a safe basename inside the receive dir."""
+    name = str(name).replace("\\", "/")
+    name = name.split("/")[-1]
+    name = "".join(ch for ch in name if ch.isprintable())
+    name = name.strip().lstrip(".").strip()
+    if not name or name in (".", ".."):
+        name = "file"
+
+    stem, ext = os.path.splitext(name)
+    reserved = {"con", "prn", "aux", "nul"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
+    if stem.lower() in reserved:
+        name = "_" + name
+    if len(name) > 200:
+        stem, ext = os.path.splitext(name)
+        name = stem[:180] + ext[:20]
+    return name
+
+
+class IntegrityError(Exception):
+    pass
 
 
 class TransferTask:
@@ -32,6 +86,7 @@ class TransferTask:
         self.from_device: Optional[str] = None
         self.to_device: Optional[str] = None
         self._last_emit = 0.0
+        self._writer: Optional[asyncio.StreamWriter] = None
 
     def to_dict(self) -> dict:
         return {
@@ -57,11 +112,16 @@ class TransferEngine:
         self.completed_transfers: list[dict] = []
         self.verified_transfers: dict[str, dict] = {}
         self._progress_callback: Optional[Callable] = None
+        self._chat_callback: Optional[Callable] = None
         self._receive_dir = os.path.expanduser("~/Downloads/SyncFlow")
         self.identity = identity or DeviceIdentityKeys()
         self.device_name = device_name
         self.require_approval = True
         self._pending_approvals: dict[str, asyncio.Future] = {}
+        self.trust = PeerTrustStore(
+            os.path.join(os.path.dirname(os.path.abspath(self.identity.storage_dir)), "peers.json")
+        )
+        self._chat_times: dict[str, list[float]] = {}
         os.makedirs(self._receive_dir, exist_ok=True)
 
     def set_receive_dir(self, path: str):
@@ -70,6 +130,9 @@ class TransferEngine:
 
     def set_approval(self, enabled: bool):
         self.require_approval = enabled
+
+    def set_chat_callback(self, callback: Callable):
+        self._chat_callback = callback
 
     def approve_transfer(self, transfer_id: str) -> bool:
         fut = self._pending_approvals.get(transfer_id)
@@ -101,13 +164,73 @@ class TransferEngine:
         finally:
             self._pending_approvals.pop(task.id, None)
 
-    def set_progress_callback(self, callback: Callable):
-        self._progress_callback = callback
+    # ------------------------------------------------------------------
+    # Framing helpers (all bounded + timed)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    async def _read_raw(reader, timeout: float, max_len: int) -> bytes:
+        hdr = await asyncio.wait_for(reader.readexactly(4), timeout)
+        n = int.from_bytes(hdr, "big")
+        if n <= 0 or n > max_len:
+            raise ValueError(f"frame size {n} out of range (max {max_len})")
+        return await asyncio.wait_for(reader.readexactly(n), timeout)
+
+    @classmethod
+    async def _read_json(cls, reader, timeout: float, max_len: int = MAX_JSON_MSG) -> dict:
+        raw = await cls._read_raw(reader, timeout, max_len)
+        try:
+            data = json.loads(raw)
+        except Exception:
+            raise ValueError("message is not valid JSON")
+        if not isinstance(data, dict):
+            raise ValueError("message must be a JSON object")
+        return data
+
+    @classmethod
+    async def _read_blob(cls, reader, timeout: float, max_len: int) -> bytes:
+        return await cls._read_raw(reader, timeout, max_len)
+
+    @staticmethod
+    async def _write_json(writer, data: dict, timeout: float):
+        raw = json.dumps(data).encode()
+        if len(raw) > MAX_JSON_MSG:
+            raise ValueError("outgoing message too large")
+        writer.write(len(raw).to_bytes(4, "big"))
+        writer.write(raw)
+        await asyncio.wait_for(writer.drain(), timeout)
+
+    @staticmethod
+    async def _write_blob(writer, blob: bytes, timeout: float, max_len: int):
+        if len(blob) == 0 or len(blob) > max_len:
+            raise ValueError(f"blob size {len(blob)} out of range")
+        writer.write(len(blob).to_bytes(4, "big"))
+        writer.write(blob)
+        await asyncio.wait_for(writer.drain(), timeout)
+
+    @classmethod
+    async def _write_enc(cls, writer, session: SessionCrypto, payload: dict, timeout: float, max_len: int):
+        await cls._write_blob(writer, session.encrypt(json.dumps(payload).encode()), timeout, max_len)
+
+    @classmethod
+    async def _read_enc(cls, reader, session: SessionCrypto, timeout: float, max_len: int) -> dict:
+        blob = await cls._read_blob(reader, timeout, max_len)
+        try:
+            data = json.loads(session.decrypt(blob))
+        except Exception:
+            raise IntegrityError("encrypted message failed authentication")
+        if not isinstance(data, dict):
+            raise IntegrityError("encrypted message must be an object")
+        return data
+
+    # ------------------------------------------------------------------
+    # Sending
+    # ------------------------------------------------------------------
 
     async def send_files(self, file_paths: list[str], target_ip: str, target_port: int = 18974, transfer_id: Optional[str] = None) -> TransferTask:
         files = []
         for fp in file_paths:
-            if os.path.exists(fp):
+            if os.path.exists(fp) and not os.path.isdir(fp):
                 stat = os.stat(fp)
                 files.append({
                     "name": os.path.basename(fp),
@@ -122,88 +245,119 @@ class TransferEngine:
         return task
 
     async def _execute_transfer(self, task: TransferTask):
+        writer: Optional[asyncio.StreamWriter] = None
         try:
-            reader, writer = await asyncio.open_connection(task.target_ip, task.target_port)
+            task.status = "pending"
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(task.target_ip, task.target_port), CONNECT_TIMEOUT
+            )
+            task._writer = writer
 
             offer, session = handshake_offer(self.identity)
-            offer["type"] = "transfer_start"
-            offer["transferId"] = task.id
             offer["security"] = "e2e-blockchain-v1"
-            offer["senderName"] = self.device_name
-            offer["files"] = [
-                {"name": f["name"], "size": f["size"]}
-                for f in task.files
-            ]
+            await self._write_json(writer, offer, HDR_TIMEOUT)
 
-            await self._write_msg(writer, offer)
+            response = await self._read_json(reader, HDR_TIMEOUT)
 
-            response = await self._read_msg(reader)
-
-            if task._cancelled:
-                writer.close()
-                await writer.wait_closed()
+            # Verify identity BEFORE trusting anything in the response
+            if not handshake_complete(self.identity, response, session, initiator=True):
+                task.status = "failed"
+                task.error = "E2E handshake failed — identity mismatch or MITM detected"
                 return
 
+            pin_ok, pin_why = self.trust.check(
+                f"{task.target_ip}:{task.target_port}", response.get("signingPub", "")
+            )
+            if not pin_ok:
+                task.status = "failed"
+                task.error = san(pin_why)
+                return
+
+            # Response status is now authenticated — safe to act on
             if response.get("status") != "accepted":
                 task.status = "failed"
-                task.error = response.get("error", "Transfer rejected")
-                writer.close()
-                await writer.wait_closed()
+                task.error = san(response.get("error", "Transfer rejected"))
                 return
 
-            if not handshake_complete(self.identity, response, session):
-                task.status = "failed"
-                task.error = "E2E handshake failed — identity mismatch, possible MITM"
-                writer.close()
-                await writer.wait_closed()
+            meta = {
+                "kind": "transfer",
+                "transferId": task.id,
+                "senderName": san(self.device_name, 64),
+                "files": [
+                    {"name": os.path.basename(f["name"]), "size": f["size"]}
+                    for f in task.files
+                ],
+            }
+            await self._write_enc(writer, session, meta, STREAM_TIMEOUT, MAX_META_BLOB)
+
+            decision = await self._read_enc(reader, session, DECISION_TIMEOUT, MAX_META_BLOB)
+            if decision.get("status") != "accepted":
+                reason = decision.get("reason", "user")
+                task.error = san(decision.get("error") or "Transfer declined by receiver")
+                task.status = "cancelled" if reason == "user" else "failed"
                 return
 
             task.status = "transferring"
-
             for file_info in task.files:
                 if task._cancelled:
                     break
                 await self._send_file(reader, writer, file_info, task, session)
 
             if not task._cancelled:
-                final = {
-                    "type": "transfer_complete",
-                    "verified": True,
-                    "chains": task.chains,
-                }
-                await self._write_msg(writer, final)
+                await self._write_enc(
+                    writer, session,
+                    {"type": "transfer_complete", "verified": True},
+                    STREAM_TIMEOUT, MAX_ACK_BLOB,
+                )
                 task.status = "completed"
                 task.progress = 1.0
                 task.verified = True
-                task.end_time = time.time()
 
-            writer.close()
-            await writer.wait_closed()
-
+        except asyncio.TimeoutError:
+            task.status = "failed"
+            task.error = "Connection timed out"
+        except asyncio.CancelledError:
+            task.status = "cancelled"
+            task.error = task.error or "Cancelled"
+            raise
+        except (ConnectionError, asyncio.IncompleteReadError, OSError) as e:
+            if task._cancelled:
+                task.status = "cancelled"
+            else:
+                task.status = "failed"
+                task.error = "Connection lost" if isinstance(e, (ConnectionError, asyncio.IncompleteReadError)) else san(str(e))
         except Exception as e:
             task.status = "failed"
-            task.error = str(e)
-            task.end_time = time.time()
-
+            task.error = san(str(e))
         finally:
+            task.end_time = time.time()
+            if writer:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
             if task.id in self.active_transfers:
                 del self.active_transfers[task.id]
             self.completed_transfers.append(task.to_dict())
             if self._progress_callback:
-                await self._progress_callback(task)
+                try:
+                    await self._progress_callback(task)
+                except Exception:
+                    pass
 
     async def _send_file(self, reader, writer, file_info: dict, task: TransferTask, session: SessionCrypto):
         file_path = file_info["path"]
         file_size = file_info["size"]
+        file_name = os.path.basename(file_info["name"])
 
-        chain = TransferChain(task.id, file_info["name"], self.identity.signing_pub_b64)
+        chain = TransferChain(task.id, file_name, self.identity.signing_pub_b64)
 
-        await self._write_msg(writer, {
-            "type": "file_start",
-            "name": file_info["name"],
+        await self._write_enc(writer, session, {
+            "type": "file_meta",
+            "name": file_name,
             "size": file_size,
-            "senderPub": self.identity.signing_pub_b64,
-        })
+        }, STREAM_TIMEOUT, MAX_META_BLOB)
 
         sent = 0
         with open(file_path, "rb") as f:
@@ -216,21 +370,12 @@ class TransferEngine:
                     break
 
                 block = chain.append_chunk(chunk, signer=self.identity)
-                encrypted = session.encrypt(chunk)
+                frame = {"header": block.header(), "sig": block.signature}
+                enc_frame = session.encrypt(json.dumps(frame).encode())
+                enc_chunk = session.encrypt(chunk)
 
-                frame = {
-                    "blockIndex": block.index,
-                    "blockHash": block.block_hash(),
-                    "prevHash": block.prev_hash,
-                    "chunkHash": block.chunk_hash,
-                    "sig": block.signature,
-                }
-                frame_bytes = json.dumps(frame).encode()
-                writer.write(len(frame_bytes).to_bytes(4, "big"))
-                writer.write(frame_bytes)
-                writer.write(len(encrypted).to_bytes(4, "big"))
-                writer.write(encrypted)
-                await writer.drain()
+                await self._write_blob(writer, enc_frame, STREAM_TIMEOUT, MAX_FRAME_BLOB)
+                await self._write_blob(writer, enc_chunk, STREAM_TIMEOUT, MAX_CHUNK_BLOB)
 
                 sent += len(chunk)
                 task.bytes_transferred += len(chunk)
@@ -240,38 +385,139 @@ class TransferEngine:
                 if elapsed > 0:
                     task.speed = task.bytes_transferred / elapsed
 
-                if self._progress_callback:
+                if self._progress_callback and time.time() - task._last_emit > 0.25:
+                    task._last_emit = time.time()
                     await self._progress_callback(task)
 
-                await asyncio.sleep(0)
+        await self._write_enc(writer, session, chain.wire_manifest(), STREAM_TIMEOUT, MAX_META_BLOB)
+        task.chains.append(chain.wire_manifest())
 
-        manifest = chain.to_manifest()
-        task.chains.append(manifest)
-        await self._write_msg(writer, {"type": "file_manifest", "manifest": manifest})
-
-        ack = await self._read_msg(reader)
+        ack = await self._read_enc(reader, session, STREAM_TIMEOUT, MAX_ACK_BLOB)
         if not ack.get("verified"):
             task.status = "failed"
-            task.error = f"Receiver rejected: {ack.get('reason', 'verification failed')}"
-            raise RuntimeError(task.error)
+            task.error = san(ack.get("reason", "verification failed"))
+            raise IntegrityError(task.error)
+
+    # ------------------------------------------------------------------
+    # Chat (E2E relayed to peers over the transfer port)
+    # ------------------------------------------------------------------
+
+    async def send_chat(self, target_ip: str, text: str, target_port: int = 18974) -> bool:
+        reader = writer = None
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(target_ip, target_port), CONNECT_TIMEOUT
+            )
+            offer, session = handshake_offer(self.identity)
+            offer["security"] = "e2e-blockchain-v1"
+            await self._write_json(writer, offer, HDR_TIMEOUT)
+
+            response = await self._read_json(reader, HDR_TIMEOUT)
+            if not handshake_complete(self.identity, response, session, initiator=True):
+                print(f"Chat: handshake failed for {target_ip}", flush=True)
+                return False
+            pin_ok, pin_why = self.trust.check(f"{target_ip}:{target_port}", response.get("signingPub", ""))
+            if not pin_ok:
+                print(f"Chat: {san(pin_why)}", flush=True)
+                return False
+            if response.get("status") != "accepted":
+                return False
+
+            meta = {
+                "kind": "chat",
+                "text": text,
+                "fromDevice": san(self.device_name, 64),
+                "ts": time.time(),
+            }
+            await self._write_enc(writer, session, meta, STREAM_TIMEOUT, MAX_META_BLOB)
+            ack = await self._read_enc(reader, session, STREAM_TIMEOUT, MAX_ACK_BLOB)
+            return bool(ack.get("ok"))
+        except Exception as e:
+            print(f"Chat relay to {target_ip} failed: {san(e, 120)}", flush=True)
+            return False
+        finally:
+            if writer:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
+    # Receiving
+    # ------------------------------------------------------------------
+
+    def _chat_rate_limited(self, ip: str) -> bool:
+        now = time.time()
+        times = self._chat_times.setdefault(ip, [])
+        times[:] = [t for t in times if now - t < CHAT_RATE_WINDOW]
+        if len(times) >= CHAT_RATE_LIMIT:
+            return True
+        times.append(now)
+        return False
 
     async def receive_transfer(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         task: Optional[TransferTask] = None
+        src_ip = (writer.get_extra_info("peername") or ("0.0.0.0", 0))[0]
         try:
-            header = await self._read_msg(reader)
+            # Step 1: authenticated handshake offer (no filenames yet)
+            offer = await self._read_json(reader, HDR_TIMEOUT)
+            if offer.get("type") != "e2e_offer":
+                raise ValueError("expected e2e_offer handshake")
 
-            files = header.get("files", [])
+            pin_ok, pin_why = self.trust.check(src_ip, offer.get("signingPub", ""))
+            if not pin_ok:
+                raise ValueError(pin_why)
+
+            accept, session = handshake_accept(self.identity, offer)  # verifies sig + freshness
+            await self._write_json(writer, {**accept, "status": "accepted"}, HDR_TIMEOUT)
+            signer_pub = offer["signingPub"]
+
+            # Step 2: encrypted metadata (filenames/sender never plaintext)
+            meta = await self._read_enc(reader, session, META_TIMEOUT, MAX_META_BLOB)
+            kind = meta.get("kind")
+
+            if kind == "chat":
+                await self._handle_incoming_chat(meta, offer, session, writer, src_ip)
+                return
+
+            if kind != "transfer":
+                raise ValueError("unknown encrypted payload kind")
+
+            sender_name = san(meta.get("senderName", "Unknown device"), 64)
+            self.trust.check(src_ip, signer_pub, name=sender_name)  # refresh display name
+
+            raw_files = meta.get("files")
+            if not isinstance(raw_files, list) or not raw_files:
+                raise ValueError("transfer declared no files")
+            if len(raw_files) > 1000:
+                raise ValueError("too many files in one transfer")
+
+            files = []
+            for entry in raw_files[:1000]:
+                if not isinstance(entry, dict):
+                    raise ValueError("invalid file entry")
+                size = entry.get("size", 0)
+                if not isinstance(size, int) or size < 0:
+                    raise ValueError("invalid file size")
+                files.append({
+                    "name": sanitize_filename(str(entry.get("name", "file"))),
+                    "size": size,
+                    "path": "",
+                    "type": "application/octet-stream",
+                })
+
+            transfer_id = str(meta.get("transferId", ""))
+            if not TRANSFER_ID_RE.match(transfer_id):
+                transfer_id = str(uuid.uuid4())
+            # Namespace received ids so they can never collide with local sends
             task = TransferTask(
-                [
-                    {"name": f.get("name", "file"), "size": f.get("size", 0), "path": "", "type": "application/octet-stream"}
-                    for f in files
-                ],
-                target_ip=(writer.get_extra_info("peername") or ("", 0))[0],
-                transfer_id=header.get("transferId") or None,
+                files, target_ip=src_ip, transfer_id=f"in-{transfer_id}"
             )
-            task.from_device = header.get("senderName") or "Unknown device"
+            task.from_device = sender_name
             task.to_device = "This Device"
-            task.verified = True
+            task.verified = False
+            task._writer = writer
             self.active_transfers[task.id] = task
 
             if self.require_approval:
@@ -280,126 +526,259 @@ class TransferEngine:
                     if decision == "timeout":
                         task.status = "failed"
                         error = task.error or "Timed out waiting for approval"
+                        reason = "timeout"
                     else:
                         task.status = "cancelled"
                         task.error = "Transfer declined by receiver"
                         error = task.error
+                        reason = "user"
                     task.end_time = time.time()
-                    await self._write_msg(writer, {"status": "declined", "error": error})
+                    await self._write_enc(
+                        writer, session,
+                        {"status": "declined", "reason": reason, "error": error},
+                        HDR_TIMEOUT, MAX_META_BLOB,
+                    )
+                    return
+                if task._cancelled:
+                    await self._write_enc(
+                        writer, session,
+                        {"status": "declined", "reason": "user", "error": "Transfer declined by receiver"},
+                        HDR_TIMEOUT, MAX_META_BLOB,
+                    )
+                    task.status = "cancelled"
+                    task.end_time = time.time()
                     return
 
-            accept, session = handshake_accept(self.identity, header)
-            accept["status"] = "accepted"
-
-            await self._write_msg(writer, accept)
-
+            await self._write_enc(
+                writer, session, {"status": "accepted"}, HDR_TIMEOUT, MAX_META_BLOB
+            )
             task.status = "transferring"
 
-            for file_info in files:
-                await self._receive_file(reader, writer, file_info, session, task)
+            all_verified = True
+            for expected in files:
+                ok = await self._receive_file(reader, writer, expected, session, task, signer_pub)
+                if not ok:
+                    all_verified = False
+                    break
 
-            final = await self._read_msg(reader)
+            if all_verified and not task._cancelled:
+                final = await self._read_enc(reader, session, STREAM_TIMEOUT, MAX_ACK_BLOB)
+                if final.get("type") == "transfer_complete" and task.bytes_transferred == task.total_bytes:
+                    task.status = "completed"
+                    task.progress = 1.0
+                    task.verified = True
+                else:
+                    task.status = "failed"
+                    task.error = "Transfer completion mismatch"
 
-            if task.status == "transferring":
-                task.status = "completed"
-                task.progress = 1.0
-                task.end_time = time.time()
-
-        except Exception as e:
-            print(f"Receive error: {e}", flush=True)
+        except IntegrityError as e:
+            print(f"Integrity failure from {src_ip}: {san(e, 160)}", flush=True)
             if task:
                 task.status = "failed"
-                task.error = str(e)
-                task.end_time = time.time()
+                task.error = san(e)
+                task.verified = False
+        except asyncio.TimeoutError:
+            if task:
+                task.status = "failed"
+                task.error = "Connection timed out"
+            else:
+                print(f"Handshake timeout from {src_ip}", flush=True)
+        except Exception as e:
+            print(f"Receive error from {src_ip}: {type(e).__name__}: {san(e, 160)}", flush=True)
+            if task:
+                task.status = "failed"
+                task.error = san(e) or "Transfer failed"
         finally:
             if task:
+                task.end_time = task.end_time or time.time()
                 if task.id in self.active_transfers:
                     del self.active_transfers[task.id]
                 self.completed_transfers.append(task.to_dict())
                 if self._progress_callback:
-                    await self._progress_callback(task)
-            writer.close()
-            await writer.wait_closed()
+                    try:
+                        await self._progress_callback(task)
+                    except Exception:
+                        pass
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
-    async def _receive_file(self, reader, writer, file_info: dict, session: SessionCrypto, task: Optional[TransferTask] = None):
-        fh = await self._read_msg(reader)
+    async def _handle_incoming_chat(self, meta: dict, offer: dict, session: SessionCrypto, writer, src_ip: str):
+        try:
+            text = meta.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("empty chat message")
+            text = "".join(ch for ch in text if ch.isprintable() or ch in "\n\t")[:4000]
+            if not text.strip():
+                raise ValueError("empty chat message")
+            if self._chat_rate_limited(src_ip):
+                await self._write_enc(writer, session, {"ok": False, "error": "rate limited"}, HDR_TIMEOUT, MAX_ACK_BLOB)
+                return
 
-        file_name = fh["name"]
-        file_size = fh["size"]
-        safe_name = os.path.basename(file_name)
-        dest_path = os.path.join(self._receive_dir, safe_name)
+            sender_pub = offer.get("signingPub", "")
+            device_id = sha256_str(sender_pub)[:32]
+            msg_hash = sha256_str(text + str(meta.get("ts", "")) + device_id)
+            message = {
+                "type": "chat:message",
+                "id": msg_hash[:16],
+                "fromDevice": san(meta.get("fromDevice", "Unknown device"), 64),
+                "deviceId": device_id,
+                "text": text,
+                "timestamp": float(meta.get("ts")) if isinstance(meta.get("ts"), (int, float)) else time.time(),
+                "hash": msg_hash,
+            }
+            if self._chat_callback:
+                await self._chat_callback(message)
+            await self._write_enc(writer, session, {"ok": True}, HDR_TIMEOUT, MAX_ACK_BLOB)
+        except Exception as e:
+            print(f"Chat receive error from {src_ip}: {type(e).__name__}: {san(e, 120)}", flush=True)
+
+    async def _receive_file(
+        self,
+        reader,
+        writer,
+        expected: dict,
+        session: SessionCrypto,
+        task: TransferTask,
+        signer_pub: str,
+    ) -> bool:
+        """Stream-verify one file. Writes the destination ONLY after full
+        verification (signatures, chain, merkle, size) succeeds."""
+        expected_name = expected["name"]
+        expected_size = expected["size"]
+
+        file_meta = await self._read_enc(reader, session, STREAM_TIMEOUT, MAX_META_BLOB)
+        if file_meta.get("type") != "file_meta":
+            raise IntegrityError("expected file metadata")
+        if sanitize_filename(str(file_meta.get("name", ""))) != expected_name or file_meta.get("size") != expected_size:
+            raise IntegrityError("file metadata mismatch with declared transfer")
+
+        dest_path = os.path.join(self._receive_dir, expected_name)
+        real_dir = os.path.realpath(self._receive_dir)
+        real_dest = os.path.realpath(dest_path)
+        if not (real_dest == real_dir or real_dest.startswith(real_dir + os.sep)):
+            raise IntegrityError("destination escapes receive directory")
 
         counter = 1
         while os.path.exists(dest_path):
-            name, ext = os.path.splitext(safe_name)
-            dest_path = os.path.join(self._receive_dir, f"{name}_{counter}{ext}")
+            stem, ext = os.path.splitext(expected_name)
+            dest_path = os.path.join(self._receive_dir, f"{stem}_{counter}{ext}")
             counter += 1
 
-        decrypted_chunks: list[bytes] = []
+        tmp_path = dest_path + f".part-{uuid.uuid4().hex[:8]}"
+        block_hashes: list[str] = []
+        prev_hash = TransferChain.GENESIS_HASH
         received = 0
+        last_emit = 0.0
 
-        while received < file_size:
-            frame_len = int.from_bytes(await reader.readexactly(4), "big")
-            frame = json.loads(await reader.readexactly(frame_len))
-
-            enc_len = int.from_bytes(await reader.readexactly(4), "big")
-            enc_blob = await reader.readexactly(enc_len)
-
-            chunk = session.decrypt(enc_blob)
-            decrypted_chunks.append(chunk)
-            received += len(chunk)
-
-            if task:
-                task.bytes_transferred += len(chunk)
-                task.progress = task.bytes_transferred / max(task.total_bytes, 1)
-                now = time.time()
-                if now - task._last_emit > 0.25:
-                    task._last_emit = now
-                    if task.total_bytes > 0:
-                        task.speed = task.bytes_transferred / max(now - task.start_time, 0.001)
-                    if self._progress_callback:
-                        await self._progress_callback(task)
-
-        manifest_msg = await self._read_msg(reader)
-        manifest = manifest_msg.get("manifest", {})
-
-        verified, reason = TransferChain.verify_manifest(manifest, decrypted_chunks)
-
-        with open(dest_path, "wb") as f:
-            for chunk in decrypted_chunks:
-                f.write(chunk)
-
-        if verified:
-            self.verified_transfers[manifest.get("transferId", "")] = {
-                "fileName": safe_name,
-                "destPath": dest_path,
-                "merkleRoot": manifest.get("merkleRoot"),
-            }
-            print(f"VERIFIED+DECRYPTED: {safe_name} -> {dest_path}", flush=True)
-        else:
-            if task:
-                task.verified = False
-            print(f"INTEGRITY FAIL: {safe_name} — {reason}", flush=True)
-
-        if task and task._last_emit > 0 and self._progress_callback:
-            await self._progress_callback(task)
-
-        await self._write_msg(writer, {
-            "verified": verified,
-            "reason": reason,
-            "fileName": safe_name,
-            "destPath": dest_path,
-        })
-
-    def _file_hash(self, file_path: str) -> str:
-        h = hashlib.sha256()
         try:
-            with open(file_path, "rb") as f:
-                while chunk := f.read(8192):
-                    h.update(chunk)
-        except Exception:
-            pass
-        return h.hexdigest()
+            with open(tmp_path, "wb") as out:
+                while True:
+                    blob = await self._read_blob(reader, session, STREAM_TIMEOUT, MAX_FRAME_BLOB)
+                    try:
+                        frame = json.loads(session.decrypt(blob))
+                    except Exception:
+                        raise IntegrityError("frame failed authentication")
+                    if not isinstance(frame, dict):
+                        raise IntegrityError("invalid frame")
+
+                    if frame.get("type") == "file_manifest":
+                        manifest = frame
+                        break
+                    if "header" not in frame:
+                        raise IntegrityError("unexpected message in file stream")
+
+                    data_blob = await self._read_blob(reader, session, STREAM_TIMEOUT, MAX_CHUNK_BLOB)
+                    try:
+                        chunk = session.decrypt(data_blob)
+                    except Exception:
+                        raise IntegrityError("chunk failed authentication")
+
+                    ok, reason, block_hash = TransferChain.verify_chunk(
+                        str(frame.get("header", "")),
+                        str(frame.get("sig", "")),
+                        chunk,
+                        expected_index=len(block_hashes),
+                        expected_prev=prev_hash,
+                        expected_name=expected_name,
+                        expected_signer=signer_pub,
+                        verify_fn=self.identity.verify,
+                    )
+                    if not ok:
+                        raise IntegrityError(reason)
+
+                    block_hashes.append(block_hash)
+                    prev_hash = block_hash
+                    out.write(chunk)
+                    received += len(chunk)
+                    if received > expected_size:
+                        raise IntegrityError("received more data than declared size")
+
+                    task.bytes_transferred += len(chunk)
+                    task.progress = task.bytes_transferred / max(task.total_bytes, 1)
+                    now = time.time()
+                    if now - last_emit > 0.25:
+                        last_emit = now
+                        task._last_emit = now
+                        task.speed = task.bytes_transferred / max(now - task.start_time, 0.001)
+                        if self._progress_callback:
+                            await self._progress_callback(task)
+
+            # Full verification before the file becomes visible
+            if received != expected_size:
+                raise IntegrityError(f"size mismatch: got {received} bytes, declared {expected_size}")
+            if manifest.get("blockCount") != len(block_hashes):
+                raise IntegrityError("manifest block count mismatch")
+            expected_chain = block_hashes[-1] if block_hashes else TransferChain.GENESIS_HASH
+            if manifest.get("chainHash") != expected_chain:
+                raise IntegrityError("manifest chain hash mismatch")
+            hash_list = list(block_hashes)
+            while len(hash_list) > 1:
+                if len(hash_list) % 2 == 1:
+                    hash_list.append(hash_list[-1])
+                hash_list = [
+                    sha256_str(hash_list[i] + hash_list[i + 1])
+                    for i in range(0, len(hash_list), 2)
+                ]
+            expected_merkle = hash_list[0] if hash_list else sha256_str("empty")
+            if manifest.get("merkleRoot") != expected_merkle:
+                raise IntegrityError("merkle root mismatch")
+            if manifest.get("senderPubkey") not in (signer_pub, self.identity.signing_pub_b64):
+                raise IntegrityError("manifest sender key mismatch")
+
+            os.replace(tmp_path, dest_path)
+            if manifest.get("transferId"):
+                self.verified_transfers[str(manifest.get("transferId"))] = {
+                    "fileName": expected_name,
+                    "destPath": dest_path,
+                    "merkleRoot": manifest.get("merkleRoot"),
+                }
+            print(f"VERIFIED+DECRYPTED: {san(expected_name, 120)} -> {san(dest_path, 200)}", flush=True)
+            await self._write_enc(writer, session, {"verified": True, "destPath": dest_path}, STREAM_TIMEOUT, MAX_ACK_BLOB)
+            return True
+
+        except Exception as e:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except Exception:
+                pass
+            reason = san(e, 200) or "verification failed"
+            try:
+                await self._write_enc(
+                    writer, session,
+                    {"verified": False, "reason": reason},
+                    STREAM_TIMEOUT, MAX_ACK_BLOB,
+                )
+            except Exception:
+                pass
+            if isinstance(e, IntegrityError):
+                raise
+            raise IntegrityError(reason)
+
+    # ------------------------------------------------------------------
 
     def cancel_transfer(self, transfer_id: str) -> bool:
         task = self.active_transfers.get(transfer_id)
@@ -409,21 +788,13 @@ class TransferEngine:
             fut = self._pending_approvals.get(transfer_id)
             if fut and not fut.done():
                 fut.set_result("declined")
+            if task._writer:
+                try:
+                    task._writer.close()
+                except Exception:
+                    pass
             return True
         return False
 
     def get_active_transfers(self) -> list[dict]:
         return [t.to_dict() for t in self.active_transfers.values()]
-
-    @staticmethod
-    async def _write_msg(writer, data: dict):
-        raw = json.dumps(data).encode()
-        writer.write(len(raw).to_bytes(4, "big"))
-        writer.write(raw)
-        await writer.drain()
-
-    @staticmethod
-    async def _read_msg(reader) -> dict:
-        length = int.from_bytes(await reader.readexactly(4), "big")
-        raw = await reader.readexactly(length)
-        return json.loads(raw)

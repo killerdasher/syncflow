@@ -142,6 +142,61 @@ class TransferChain:
             "blocks": [b.to_dict() for b in self.blocks],
         }
 
+    def wire_manifest(self) -> dict:
+        """Compact manifest: per-block verification happens at receive time,
+        so only aggregate hashes travel on the wire (no per-block dump)."""
+        return {
+            "transferId": self.transfer_id,
+            "fileName": self.file_name,
+            "senderPubkey": self.sender_pubkey,
+            "blockCount": len(self.blocks),
+            "merkleRoot": self.merkle_root(),
+            "chainHash": self.chain_hash(),
+        }
+
+    @staticmethod
+    def verify_chunk(
+        header_str: str,
+        signature: str,
+        chunk: bytes,
+        expected_index: int,
+        expected_prev: str,
+        expected_name: str,
+        expected_signer: str,
+        verify_fn,
+    ) -> tuple[bool, str, str]:
+        """Verify one streamed block against the running chain.
+
+        Checks: header parses, index/prev-link/file/sender all match what we
+        expect, chunk hash + size match the actual plaintext bytes, and the
+        Ed25519 signature over the exact header string is valid for the
+        authenticated sender key. Returns (ok, reason, block_hash).
+        """
+        try:
+            fields = json.loads(header_str)
+        except Exception:
+            return False, "block header is not valid JSON", ""
+
+        if not isinstance(fields, dict):
+            return False, "block header must be an object", ""
+
+        if fields.get("index") != expected_index:
+            return False, f"block index mismatch (got {fields.get('index')}, want {expected_index})", ""
+        if fields.get("prev_hash") != expected_prev:
+            return False, "chain broken — prev_hash mismatch", ""
+        if fields.get("file_name") != expected_name:
+            return False, "file_name in signed header does not match expected file", ""
+        if fields.get("sender_pubkey") != expected_signer:
+            return False, "sender_pubkey in signed header does not match authenticated peer", ""
+        if fields.get("chunk_size") != len(chunk):
+            return False, "chunk size mismatch", ""
+        if fields.get("chunk_hash") != sha256(chunk):
+            return False, "chunk hash mismatch — data tampered", ""
+        if not signature or not verify_fn(signature, header_str.encode(), expected_signer):
+            return False, "block signature invalid", ""
+
+        return True, "", sha256_str(header_str)
+
     @classmethod
     def verify_manifest(cls, manifest: dict, chunks: list[bytes]) -> tuple[bool, str]:
         blocks = manifest.get("blocks", [])

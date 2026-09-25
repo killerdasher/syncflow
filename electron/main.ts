@@ -155,6 +155,8 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webviewTag: false,
     },
     icon: join(__dirname, '..', '..', 'build', 'icon.png'),
   })
@@ -214,6 +216,17 @@ function createTray(): void {
 }
 
 app.whenReady().then(async () => {
+  // Renderer may only ever load our own UI — block any navigation away
+  // (e.g. crafted content redirecting the app window) and popups.
+  app.on('web-contents-created', (_event, contents) => {
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    contents.on('will-navigate', (event, url) => {
+      const isDevUI =
+        url.startsWith('http://localhost:5173') || url.startsWith('http://127.0.0.1:5173')
+      if (!DEV || !isDevUI) event.preventDefault()
+    })
+  })
+
   try {
     const port = await startPythonBackend()
     console.log(`Python backend started on port ${port}`)

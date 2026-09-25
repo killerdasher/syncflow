@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 import asyncio
 import json
+import re
 import secrets
-from typing import Set, Dict, Optional
-from websockets.server import serve, WebSocketServerProtocol
+from typing import Set, Dict
+
+CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class RelayServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 8765):
         self.host = host
         self.port = port
-        self.clients: Dict[str, WebSocketServerProtocol] = {}
+        self.clients: Dict[str, object] = {}
         self._tokens: Set[str] = set()
         self._pairs: Dict[str, str] = {}
 
@@ -19,40 +21,56 @@ class RelayServer:
         self._tokens.add(token)
         return token
 
-    async def _handle_client(self, ws: WebSocketServerProtocol, path: str):
+    async def _handle_client(self, ws, path: str = ""):
         client_id = None
         try:
             async for message in ws:
                 try:
                     data = json.loads(message)
-                    msg_type = data.get("type", "")
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                if not isinstance(data, dict):
+                    continue
 
-                    if msg_type == "auth":
-                        token = data.get("token", "")
-                        if token in self._tokens or not self._tokens:
-                            client_id = data.get("clientId", secrets.token_hex(8))
-                            self.clients[client_id] = ws
-                            await ws.send(json.dumps({
-                                "type": "auth_ok",
-                                "clientId": client_id,
-                            }))
-                            print(f"Client authenticated: {client_id}")
-                        else:
-                            await ws.send(json.dumps({"type": "auth_fail"}))
+                msg_type = data.get("type", "")
 
-                    elif msg_type == "relay":
-                        target = data.get("target")
-                        if target and target in self.clients:
+                if msg_type == "auth":
+                    token = data.get("token", "")
+                    # Default deny: tokens are issued by generate_token();
+                    # an empty token set means NO client may authenticate.
+                    candidate = data.get("clientId", "")
+                    if (
+                        self._tokens
+                        and token in self._tokens
+                        and isinstance(candidate, str)
+                        and CLIENT_ID_RE.match(candidate)
+                        and candidate not in self.clients
+                    ):
+                        client_id = candidate
+                        self.clients[client_id] = ws
+                        await ws.send(json.dumps({
+                            "type": "auth_ok",
+                            "clientId": client_id,
+                        }))
+                        print(f"Client authenticated: {client_id}")
+                    else:
+                        await ws.send(json.dumps({"type": "auth_fail"}))
+
+                elif msg_type in ("relay", "signal"):
+                    if client_id is None:
+                        continue
+                    target = data.get("target")
+                    if not (isinstance(target, str) and CLIENT_ID_RE.match(target)):
+                        continue
+                    if target in self.clients:
+                        if msg_type == "relay":
                             payload = data.get("payload", {})
                             await self.clients[target].send(json.dumps({
                                 "type": "relay",
                                 "from": client_id,
                                 "payload": payload,
                             }))
-
-                    elif msg_type == "signal":
-                        target = data.get("target")
-                        if target and target in self.clients:
+                        else:
                             await self.clients[target].send(json.dumps({
                                 "type": "signal",
                                 "from": client_id,
@@ -60,18 +78,16 @@ class RelayServer:
                                 "candidate": data.get("candidate"),
                             }))
 
-                except json.JSONDecodeError:
-                    pass
-
         except Exception as e:
-            print(f"Client error: {e}")
+            print(f"Client error: {type(e).__name__}")
         finally:
             if client_id and client_id in self.clients:
                 del self.clients[client_id]
                 print(f"Client disconnected: {client_id}")
 
     async def start(self):
-        server = await serve(self._handle_client, self.host, self.port)
+        from websockets.asyncio.server import serve
+        await serve(self._handle_client, self.host, self.port)
         print(f"Relay server running on ws://{self.host}:{self.port}")
         await asyncio.Future()
 

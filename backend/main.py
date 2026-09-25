@@ -1,29 +1,39 @@
 #!/usr/bin/env python3
 import asyncio
 import os
+import re
 import signal
 import socket
 import sys
 import time
-import uuid
 from typing import Optional
 
 from discovery.mdns import MDNSDiscovery
-from transfer.engine import TransferEngine
+from transfer.engine import TransferEngine, TRANSFER_ID_RE, san
 from networking import TCPServer
 from ws_bridge import WebSocketBridge
 from crypto.e2e import DeviceIdentityKeys
 from crypto.blockchain import sha256_str
 
+TARGET_HOST_RE = re.compile(r"^[A-Za-z0-9.\-:]{1,64}$")
+MAX_FILES_PER_SEND = 1000
+MAX_CHAT_LEN = 4000
+
 
 class SyncFlowBackend:
     def __init__(self):
-        self.device_id = str(uuid.uuid4())
+        self.ws_port = int(os.environ.get("SYNCFLOW_WS_PORT", "18973"))
+        self.tcp_port = int(os.environ.get("SYNCFLOW_TCP_PORT", "18974"))
+        identity_home = os.environ.get("SYNCFLOW_HOME")
+        self.identity = DeviceIdentityKeys(
+            storage_dir=os.path.join(identity_home, "identity") if identity_home else None
+        )
+        # Stable device id bound to the long-term identity (not random per boot)
+        self.device_id = sha256_str(self.identity.signing_pub_b64)[:32]
         self.device_name = socket.gethostname()
-        self.identity = DeviceIdentityKeys()
-        self.mdns = MDNSDiscovery(self.device_name, self.device_id)
+        self.mdns = MDNSDiscovery(self.device_name, self.device_id, port=self.tcp_port)
         self.transfer_engine = TransferEngine(identity=self.identity, device_name=self.device_name)
-        self.tcp_server = TCPServer(self.transfer_engine)
+        self.tcp_server = TCPServer(self.transfer_engine, port=self.tcp_port)
         self.ws_bridge: Optional[WebSocketBridge] = None
         self._running = False
         self._message_log: list[dict] = []
@@ -58,17 +68,34 @@ class SyncFlowBackend:
 
         if not target_ip or not file_paths:
             return {"type": "error", "error": "Missing target IP or files"}
+        if not isinstance(target_ip, str) or not TARGET_HOST_RE.match(target_ip):
+            return {"type": "error", "error": "Invalid target address"}
+        if not isinstance(file_paths, list) or len(file_paths) > MAX_FILES_PER_SEND:
+            return {"type": "error", "error": "Invalid file list"}
+        file_paths = [fp for fp in file_paths if isinstance(fp, str)]
+
+        try:
+            target_port = int(data.get("targetPort") or 18974)
+        except (TypeError, ValueError):
+            target_port = 18974
+        if not (0 < target_port < 65536):
+            return {"type": "error", "error": "Invalid target port"}
+
+        transfer_id = data.get("transferId") or None
+        if transfer_id is not None and (not isinstance(transfer_id, str) or not TRANSFER_ID_RE.match(transfer_id)):
+            return {"type": "error", "error": "Invalid transfer id"}
 
         existing = [fp for fp in file_paths if os.path.exists(fp)]
         if not existing:
             return {
                 "type": "transfer:error",
-                "transferId": data.get("transferId", ""),
+                "transferId": san(data.get("transferId", ""), 64),
                 "error": "None of the selected files exist on disk",
             }
 
         task = await self.transfer_engine.send_files(
-            existing, target_ip, transfer_id=data.get("transferId") or None
+            existing, target_ip, transfer_id=transfer_id,
+            target_port=target_port,
         )
 
         return {
@@ -88,6 +115,8 @@ class SyncFlowBackend:
 
     async def _handle_cancel(self, data: dict) -> dict:
         transfer_id = data.get("transferId", "")
+        if not isinstance(transfer_id, str) or not TRANSFER_ID_RE.match(transfer_id):
+            return {"type": "error", "error": "Invalid transfer id"}
         success = self.transfer_engine.cancel_transfer(transfer_id)
         return {"type": "transfer:cancelled", "transferId": transfer_id, "success": success}
 
@@ -101,7 +130,11 @@ class SyncFlowBackend:
         return {"type": "transfers:update", "active": active, "completed": completed}
 
     async def _handle_chat_send(self, data: dict) -> dict:
-        text = data.get("text", "").strip()
+        raw = data.get("text", "")
+        if not isinstance(raw, str):
+            return {"type": "chat:error", "error": "Invalid message"}
+        # Keep newlines/tabs only — strip every other control character
+        text = "".join(ch for ch in raw if ch.isprintable() or ch in "\n\t")[:MAX_CHAT_LEN].strip()
         if not text:
             return {"type": "chat:error", "error": "Empty message"}
 
@@ -123,13 +156,37 @@ class SyncFlowBackend:
         if self.ws_bridge:
             await self.ws_bridge.send_message(message)
 
+        # Fan out to every discovered peer (best-effort, non-blocking)
+        self._relay_chat(text)
+
         return {"type": "chat:ack", "messageId": message["id"], "hash": msg_hash}
+
+    def _relay_chat(self, text: str):
+        devices = [d for d in self.mdns.get_found_devices()
+                   if d.get("id") and d["id"] != self.device_id and d.get("ip") and d.get("port")]
+        for dev in devices:
+            asyncio.ensure_future(self._relay_chat_to(dev["ip"], int(dev["port"]), text))
+
+    async def _relay_chat_to(self, ip: str, port: int, text: str):
+        try:
+            await self.transfer_engine.send_chat(ip, text, target_port=port)
+        except Exception as e:
+            print(f"Chat relay error to {ip}: {san(e, 120)}", flush=True)
+
+    async def _on_incoming_chat(self, message: dict):
+        self._message_log.append(message)
+        if len(self._message_log) > 500:
+            self._message_log = self._message_log[-500:]
+        if self.ws_bridge:
+            await self.ws_bridge.send_message(message)
 
     async def _handle_chat_history(self, data: dict) -> dict:
         return {"type": "chat:history", "messages": self._message_log[-100:]}
 
     async def _handle_approval(self, data: dict) -> dict:
         transfer_id = data.get("transferId", "")
+        if not isinstance(transfer_id, str) or not TRANSFER_ID_RE.match(transfer_id):
+            return {"type": "error", "error": "Invalid transfer id"}
         approve = data.get("type") == "transfer:approve"
         handler = self.transfer_engine.approve_transfer if approve else self.transfer_engine.decline_transfer
         success = handler(transfer_id)
@@ -150,12 +207,19 @@ class SyncFlowBackend:
             reply["autoAccept"] = bool(auto_accept)
 
         if path:
+            if not isinstance(path, str):
+                return {"type": "error", "error": "Invalid download path"}
             try:
-                expanded = os.path.expanduser(path)
+                expanded = os.path.realpath(os.path.expanduser(path))
+                home = os.path.realpath(os.path.expanduser("~"))
+                # Confine downloads to the user's home — arbitrary paths
+                # (e.g. /etc/..., /tmp/...) are rejected
+                if expanded != home and not expanded.startswith(home + os.sep):
+                    return {"type": "error", "error": "Download path must be inside your home directory"}
                 self.transfer_engine.set_receive_dir(expanded)
                 reply["downloadPath"] = expanded
-            except OSError as e:
-                return {"type": "error", "error": f"Invalid download path: {e}"}
+            except (OSError, ValueError) as e:
+                return {"type": "error", "error": f"Invalid download path: {san(e, 120)}"}
 
         return reply if len(reply) > 1 else None
 
@@ -201,10 +265,11 @@ class SyncFlowBackend:
         print(f"Device: {self.device_name} ({self.device_id[:8]}...)", flush=True)
         print(f"Identity: {self.identity.signing_pub_b64[:32]}...", flush=True)
 
-        self.ws_bridge = WebSocketBridge(port=18973)
+        self.ws_bridge = WebSocketBridge(port=self.ws_port)
         self._register_handlers()
 
         self.transfer_engine.set_progress_callback(self._on_transfer_progress)
+        self.transfer_engine.set_chat_callback(self._on_incoming_chat)
 
         await self.mdns.register()
         self.mdns.start_browsing(self._on_device_found, self._on_device_lost)
