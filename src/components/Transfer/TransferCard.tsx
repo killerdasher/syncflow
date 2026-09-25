@@ -1,0 +1,173 @@
+import { motion } from 'framer-motion'
+import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban } from 'lucide-react'
+import { clsx } from 'clsx'
+import type { Transfer } from '../../lib/types'
+import { formatBytes, formatSpeed, formatDuration } from '../../lib/constants'
+import { ProgressRing } from './ProgressRing'
+import { useTransferStore } from '../../stores/transferStore'
+
+interface TransferCardProps {
+  transfer: Transfer
+}
+
+const fileIconMap: Record<string, any> = {
+  'application/zip': FileArchive,
+  'image/jpeg': FileImage,
+  'image/png': FileImage,
+  'image/gif': FileImage,
+  'video/mp4': FileVideo,
+  'video/avi': FileVideo,
+}
+
+export function TransferCard({ transfer }: TransferCardProps) {
+  const cancelTransfer = useTransferStore((s) => s.cancelTransfer)
+  const addTransfer = useTransferStore((s) => s.addTransfer)
+
+  const isActive = transfer.status === 'transferring' || transfer.status === 'pending'
+  const isCompleted = transfer.status === 'completed'
+  const isFailed = transfer.status === 'failed'
+  const isCancelled = transfer.status === 'cancelled'
+
+  const elapsed = transfer.endTime
+    ? transfer.endTime - transfer.startTime
+    : Date.now() - transfer.startTime
+
+  const handleCancel = async () => {
+    cancelTransfer(transfer.id)
+    if (window.electronAPI) {
+      await window.electronAPI.send({ type: 'command:cancel', transferId: transfer.id })
+    }
+  }
+
+  const handleRetry = async () => {
+    if (!transfer.targetIp || !window.electronAPI) return
+    addTransfer({
+      id: transfer.id,
+      status: 'pending',
+      progress: 0,
+      speed: 0,
+      bytesTransferred: 0,
+      error: undefined,
+      verified: false,
+      endTime: undefined,
+      startTime: Date.now(),
+    })
+    await window.electronAPI.send({
+      type: 'command:send',
+      targetIp: transfer.targetIp,
+      files: transfer.files.map((f) => f.path),
+      transferId: transfer.id,
+    })
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, x: -20 }}
+      transition={{ duration: 0.3 }}
+      className={clsx(
+        'glass-card p-4 transition-all duration-300',
+        isActive && 'border-cyber-teal/30 shadow-glow',
+        isCompleted && 'border-green-500/20',
+        isFailed && 'border-red-500/20',
+        isCancelled && 'border-white/10'
+      )}
+    >
+      <div className="flex items-start gap-4">
+        <ProgressRing
+          progress={transfer.progress}
+          status={transfer.status}
+        />
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between mb-2">
+            <div>
+              <h4 className="text-sm font-semibold text-frost-100 truncate">
+                {transfer.files.map((f) => f.name).join(', ')}
+              </h4>
+              <p className="text-xs text-frost-300 mt-0.5">
+                {transfer.fromDevice} → {transfer.toDevice}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1 ml-2">
+              {isActive && (
+                <button
+                  onClick={handleCancel}
+                  aria-label="Cancel transfer"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-frost-300 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                >
+                  <X size={12} />
+                </button>
+              )}
+              {(isFailed || isCancelled) && transfer.targetIp && (
+                <button
+                  onClick={handleRetry}
+                  aria-label="Retry transfer"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/10 transition-colors"
+                >
+                  <RotateCcw size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {isActive && (
+            <div className="mb-2">
+              <div className="h-1.5 bg-navy-700 rounded-full overflow-hidden">
+                <motion.div
+                  className="h-full bg-gradient-to-r from-cyber-teal to-cyber-blue rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${transfer.progress * 100}%` }}
+                  transition={{ duration: 0.5, ease: 'easeOut' }}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-4 text-xs text-frost-300">
+            <span>{formatBytes(transfer.bytesTransferred)} / {formatBytes(transfer.totalBytes)}</span>
+            {isActive && <span className="text-cyber-teal">{formatSpeed(transfer.speed)}</span>}
+            <span>{formatDuration(elapsed)}</span>
+          </div>
+
+          {transfer.files.length > 1 && (
+            <div className="mt-2 flex items-center gap-1 text-[11px] text-frost-400">
+              <span>{transfer.files.length} files</span>
+              <span>•</span>
+              <span>{formatBytes(transfer.totalBytes)}</span>
+            </div>
+          )}
+
+          {isFailed && transfer.error && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
+              <AlertCircle size={12} />
+              {transfer.error}
+            </div>
+          )}
+
+          {isCancelled && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-frost-400">
+              <Ban size={12} />
+              Transfer cancelled
+            </div>
+          )}
+
+          {isCompleted && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-green-400">
+              <Check size={12} />
+              Transfer complete
+              {transfer.verified && (
+                <span className="flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded bg-green-400/10 border border-green-400/20">
+                  <ShieldCheck size={10} />
+                  Chain verified
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  )
+}
