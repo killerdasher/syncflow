@@ -57,6 +57,7 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
     await window.electronAPI.send({
       type: 'command:send',
       targetIp: transfer.targetIp,
+      targetDeviceId: transfer.targetDeviceId,
       files: transfer.files.map((f) => f.path),
       transferId: transfer.id,
     })

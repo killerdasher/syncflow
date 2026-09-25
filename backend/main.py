@@ -85,6 +85,12 @@ class SyncFlowBackend:
         if transfer_id is not None and (not isinstance(transfer_id, str) or not TRANSFER_ID_RE.match(transfer_id)):
             return {"type": "error", "error": "Invalid transfer id"}
 
+        expected_device_id = data.get("targetDeviceId") or None
+        if expected_device_id is not None and (
+            not isinstance(expected_device_id, str) or not TRANSFER_ID_RE.match(expected_device_id)
+        ):
+            return {"type": "error", "error": "Invalid target device id"}
+
         existing = [fp for fp in file_paths if os.path.exists(fp)]
         if not existing:
             return {
@@ -95,7 +101,7 @@ class SyncFlowBackend:
 
         task = await self.transfer_engine.send_files(
             existing, target_ip, transfer_id=transfer_id,
-            target_port=target_port,
+            target_port=target_port, expected_device_id=expected_device_id,
         )
 
         return {
@@ -165,11 +171,11 @@ class SyncFlowBackend:
         devices = [d for d in self.mdns.get_found_devices()
                    if d.get("id") and d["id"] != self.device_id and d.get("ip") and d.get("port")]
         for dev in devices:
-            asyncio.ensure_future(self._relay_chat_to(dev["ip"], int(dev["port"]), text))
+            asyncio.ensure_future(self._relay_chat_to(dev["ip"], int(dev["port"]), text, dev["id"]))
 
-    async def _relay_chat_to(self, ip: str, port: int, text: str):
+    async def _relay_chat_to(self, ip: str, port: int, text: str, expected_device_id: str):
         try:
-            await self.transfer_engine.send_chat(ip, text, target_port=port)
+            await self.transfer_engine.send_chat(ip, text, target_port=port, expected_device_id=expected_device_id)
         except Exception as e:
             print(f"Chat relay error to {ip}: {san(e, 120)}", flush=True)
 

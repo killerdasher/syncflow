@@ -25,6 +25,7 @@ export interface Transfer {
   endTime?: number
   error?: string
   targetIp?: string
+  targetDeviceId?: string
   verified?: boolean
 }
 

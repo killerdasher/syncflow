@@ -37,12 +37,14 @@ function App() {
       totalBytes: files.reduce((sum, f) => sum + f.size, 0),
       startTime: Date.now(),
       targetIp: targetDevice.ip,
+      targetDeviceId: targetDevice.id,
     }
     addTransfer(newTransfer)
 
     const success = await send({
       type: 'command:send',
       targetIp: targetDevice.ip,
+      targetDeviceId: targetDevice.id,
       files: files.map((f) => f.path),
       transferId: newTransfer.id,
     })

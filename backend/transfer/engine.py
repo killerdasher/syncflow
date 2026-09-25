@@ -85,6 +85,7 @@ class TransferTask:
         self.verified = False
         self.from_device: Optional[str] = None
         self.to_device: Optional[str] = None
+        self.expected_device_id: Optional[str] = None
         self._last_emit = 0.0
         self._writer: Optional[asyncio.StreamWriter] = None
 
@@ -227,7 +228,7 @@ class TransferEngine:
     # Sending
     # ------------------------------------------------------------------
 
-    async def send_files(self, file_paths: list[str], target_ip: str, target_port: int = 18974, transfer_id: Optional[str] = None) -> TransferTask:
+    async def send_files(self, file_paths: list[str], target_ip: str, target_port: int = 18974, transfer_id: Optional[str] = None, expected_device_id: Optional[str] = None) -> TransferTask:
         files = []
         for fp in file_paths:
             if os.path.exists(fp) and not os.path.isdir(fp):
@@ -240,6 +241,7 @@ class TransferEngine:
                 })
 
         task = TransferTask(files, target_ip, target_port, transfer_id=transfer_id)
+        task.expected_device_id = expected_device_id
         self.active_transfers[task.id] = task
         asyncio.create_task(self._execute_transfer(task))
         return task
@@ -264,6 +266,16 @@ class TransferEngine:
                 task.status = "failed"
                 task.error = "E2E handshake failed — identity mismatch or MITM detected"
                 return
+
+            # Bind the connection to the device we meant to reach: the
+            # advertised deviceId is a hash of the peer's signing key, so a
+            # different responder cannot claim to be that device.
+            if task.expected_device_id:
+                actual_id = sha256_str(str(response.get("signingPub", "")))[:32]
+                if actual_id != task.expected_device_id:
+                    task.status = "failed"
+                    task.error = "Peer identity does not match the selected device (possible MITM)"
+                    return
 
             pin_ok, pin_why = self.trust.check(
                 f"{task.target_ip}:{task.target_port}", response.get("signingPub", "")
@@ -402,7 +414,7 @@ class TransferEngine:
     # Chat (E2E relayed to peers over the transfer port)
     # ------------------------------------------------------------------
 
-    async def send_chat(self, target_ip: str, text: str, target_port: int = 18974) -> bool:
+    async def send_chat(self, target_ip: str, text: str, target_port: int = 18974, expected_device_id: Optional[str] = None) -> bool:
         reader = writer = None
         try:
             reader, writer = await asyncio.wait_for(
@@ -416,6 +428,11 @@ class TransferEngine:
             if not handshake_complete(self.identity, response, session, initiator=True):
                 print(f"Chat: handshake failed for {target_ip}", flush=True)
                 return False
+            if expected_device_id:
+                actual_id = sha256_str(str(response.get("signingPub", "")))[:32]
+                if actual_id != expected_device_id:
+                    print(f"Chat: peer identity mismatch for {target_ip}", flush=True)
+                    return False
             pin_ok, pin_why = self.trust.check(f"{target_ip}:{target_port}", response.get("signingPub", ""))
             if not pin_ok:
                 print(f"Chat: {san(pin_why)}", flush=True)
