@@ -1,9 +1,13 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { Send } from 'lucide-react'
 import { TitleBar } from './components/shared/TitleBar'
 import { AnimatedBackground } from './components/shared/AnimatedBackground'
+import { GlowButton } from './components/shared/GlowButton'
 import { Sidebar } from './components/Sidebar/Sidebar'
 import { DeviceGrid } from './components/Dashboard/DeviceGrid'
+import { AddDeviceModal } from './components/Dashboard/AddDeviceModal'
+import { DevicePickerModal } from './components/Dashboard/DevicePickerModal'
 import { TransferList } from './components/Transfer/TransferList'
 import { FileDropZone } from './components/Transfer/FileDropZone'
 import { SyncPage } from './components/Sync/SyncPage'
@@ -16,15 +20,29 @@ import { useDeviceStore } from './stores/deviceStore'
 import { useSettingsStore } from './stores/settingsStore'
 import type { Device, Transfer, FileItem } from './lib/types'
 
+// Real peer ids are sha256-derived 32-char hex; locally added devices use
+// synthetic ids (e.g. "manual-1.2.3.4-…") that must not be sent as
+// targetDeviceId — the backend validates the format and the peer identity.
+const REAL_DEVICE_ID_RE = /^[0-9a-f]{32}$/
+const deviceIdOf = (d: Device): string | undefined => (REAL_DEVICE_ID_RE.test(d.id) ? d.id : undefined)
+
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [addDeviceOpen, setAddDeviceOpen] = useState(false)
+  const [pickerFiles, setPickerFiles] = useState<FileItem[] | null>(null)
   const addTransfer = useTransferStore((s) => s.addTransfer)
-  const selectedDevice = useDeviceStore((s) => s.selectedDevice)
+  const devices = useDeviceStore((s) => s.devices)
   const deviceName = useSettingsStore((s) => s.settings.deviceName)
+
+  const connectedTargets = useMemo(
+    () => devices.filter((d) => d.id !== 'self' && d.status === 'connected'),
+    [devices]
+  )
 
   const { send } = useWebSocket()
 
   const sendFiles = useCallback(async (files: FileItem[], targetDevice: Device) => {
+    const targetDeviceId = deviceIdOf(targetDevice)
     const newTransfer: Transfer = {
       id: `tr-${Date.now()}`,
       fromDevice: deviceName || 'This Device',
@@ -37,14 +55,14 @@ function App() {
       totalBytes: files.reduce((sum, f) => sum + f.size, 0),
       startTime: Date.now(),
       targetIp: targetDevice.ip,
-      targetDeviceId: targetDevice.id,
+      targetDeviceId,
     }
     addTransfer(newTransfer)
 
     const success = await send({
       type: 'command:send',
       targetIp: targetDevice.ip,
-      targetDeviceId: targetDevice.id,
+      ...(targetDeviceId ? { targetDeviceId } : {}),
       files: files.map((f) => f.path),
       transferId: newTransfer.id,
     })
@@ -59,6 +77,59 @@ function App() {
     setActiveTab('transfers')
   }, [addTransfer, send, deviceName])
 
+  const pickFiles = useCallback((): Promise<FileItem[]> => {
+    if (window.electronAPI?.openFiles) {
+      return window.electronAPI
+        .openFiles()
+        .then((items) => items || [])
+        .catch(() => [])
+    }
+    // Fallback for running the renderer in a plain browser (no preload)
+    return new Promise((resolve) => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.multiple = true
+      input.addEventListener('cancel', () => resolve([]))
+      input.addEventListener('change', () => {
+        const arr = Array.from(input.files || [])
+        resolve(
+          arr.map((f) => ({
+            name: f.name,
+            path: window.electronAPI?.getFilePath?.(f) || f.name,
+            size: f.size,
+            type: f.type || 'application/octet-stream',
+          }))
+        )
+      })
+      input.click()
+    })
+  }, [])
+
+  const routeFiles = useCallback(
+    async (files: FileItem[]) => {
+      if (files.length === 0) return
+      const state = useDeviceStore.getState()
+      const sel = state.selectedDevice
+      if (sel && sel.id !== 'self' && sel.status === 'connected') {
+        await sendFiles(files, sel)
+        return
+      }
+      const connected = state.devices.filter((d) => d.id !== 'self' && d.status === 'connected')
+      if (connected.length === 1) {
+        await sendFiles(files, connected[0])
+        return
+      }
+      // Zero or several targets — let the user choose (or add a device)
+      setPickerFiles(files)
+    },
+    [sendFiles]
+  )
+
+  const handleQuickSend = useCallback(async () => {
+    const files = await pickFiles()
+    await routeFiles(files)
+  }, [pickFiles, routeFiles])
+
   const handleSendToDevice = useCallback(async (device: Device) => {
     if (!window.electronAPI?.openFiles) {
       const fileInput = document.querySelector<HTMLInputElement>('input[type="file"]')
@@ -72,36 +143,18 @@ function App() {
     }
   }, [sendFiles])
 
-  const handleFilesSelected = useCallback(async (files: File[]) => {
-    const fileItems: FileItem[] = files.map((f) => ({
-      name: f.name,
-      path: (window.electronAPI?.getFilePath?.(f)) || f.webkitRelativePath || f.name,
-      size: f.size,
-      type: f.type || 'application/octet-stream',
-    }))
-
-    const target = selectedDevice || useDeviceStore.getState().devices.find((d) => d.id !== 'self' && d.status === 'connected')
-
-    if (target) {
-      await sendFiles(fileItems, target)
-    } else {
-      const newTransfer: Transfer = {
-        id: `tr-${Date.now()}`,
-        fromDevice: deviceName || 'This Device',
-        toDevice: 'No device selected',
-        files: fileItems,
-        status: 'failed',
-        progress: 0,
-        speed: 0,
-        bytesTransferred: 0,
-        totalBytes: fileItems.reduce((sum, f) => sum + f.size, 0),
-        startTime: Date.now(),
-        error: 'No connected target device selected',
-      }
-      addTransfer(newTransfer)
-      setActiveTab('transfers')
-    }
-  }, [selectedDevice, sendFiles, addTransfer, deviceName])
+  const handleFilesSelected = useCallback(
+    async (files: File[]) => {
+      const fileItems: FileItem[] = files.map((f) => ({
+        name: f.name,
+        path: window.electronAPI?.getFilePath?.(f) || f.webkitRelativePath || f.name,
+        size: f.size,
+        type: f.type || 'application/octet-stream',
+      }))
+      await routeFiles(fileItems)
+    },
+    [routeFiles]
+  )
 
   const renderContent = () => {
     switch (activeTab) {
@@ -114,8 +167,21 @@ function App() {
             exit={{ opacity: 0 }}
             className="space-y-6"
           >
-            <FileDropZone onFilesSelected={handleFilesSelected} />
-            <DeviceGrid onSendToDevice={handleSendToDevice} />
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-frost-100">Send Files</h2>
+                  <p className="text-sm text-frost-300">
+                    Pick files to send — drag &amp; drop below or click the button
+                  </p>
+                </div>
+                <GlowButton icon={<Send size={14} />} onClick={handleQuickSend}>
+                  Send Files
+                </GlowButton>
+              </div>
+              <FileDropZone onFilesSelected={handleFilesSelected} />
+            </div>
+            <DeviceGrid onSendToDevice={handleSendToDevice} onAddDevice={() => setAddDeviceOpen(true)} />
           </motion.div>
         )
       case 'transfers':
@@ -127,7 +193,7 @@ function App() {
             exit={{ opacity: 0 }}
             className="h-full"
           >
-            <TransferList />
+            <TransferList onSendFiles={handleQuickSend} />
           </motion.div>
         )
       case 'chat':
@@ -192,6 +258,18 @@ function App() {
           </AnimatePresence>
         </main>
       </div>
+      <AddDeviceModal isOpen={addDeviceOpen} onClose={() => setAddDeviceOpen(false)} />
+      <DevicePickerModal
+        files={pickerFiles}
+        devices={connectedTargets}
+        onClose={() => setPickerFiles(null)}
+        onSend={(device) => {
+          const files = pickerFiles
+          setPickerFiles(null)
+          if (files) sendFiles(files, device)
+        }}
+        onAddDevice={() => setAddDeviceOpen(true)}
+      />
     </div>
   )
 }

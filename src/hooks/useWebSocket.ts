@@ -95,6 +95,17 @@ export function useWebSocket() {
         case 'transfer:new':
           addTransfer({ ...(msg.transfer || {}), id: msg.transfer?.id || `tr-${Date.now()}` })
           break
+        case 'error':
+          // Backend validation/refusal replies — fail the matching transfer so
+          // it can't sit in "pending" forever (e.g. invalid target device id)
+          if (msg.transferId && useTransferStore.getState().transfers.some((t) => t.id === msg.transferId)) {
+            updateTransfer(msg.transferId, {
+              status: 'failed',
+              error: msg.error || 'Backend rejected the request',
+              speed: 0,
+            })
+          }
+          break
         case 'identity:info':
           if (msg.deviceId) setSelfId(msg.deviceId)
           break
@@ -137,6 +148,7 @@ export function useWebSocket() {
     window.electronAPI.onStatus(handleStatus)
 
     window.electronAPI.send({ type: 'identity:get' })
+    window.electronAPI.send({ type: 'devices:list' })
 
     const s = useSettingsStore.getState().settings
     window.electronAPI.send({

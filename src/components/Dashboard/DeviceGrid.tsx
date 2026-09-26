@@ -1,20 +1,18 @@
-import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Plus } from 'lucide-react'
 import { useDeviceStore } from '../../stores/deviceStore'
 import { DeviceCard } from './DeviceCard'
-import { AddDeviceModal } from './AddDeviceModal'
 import { GlowButton } from '../shared/GlowButton'
 
 interface DeviceGridProps {
   onSendToDevice: (device: any) => void
+  onAddDevice: () => void
 }
 
-export function DeviceGrid({ onSendToDevice }: DeviceGridProps) {
+export function DeviceGrid({ onSendToDevice, onAddDevice }: DeviceGridProps) {
   const devices = useDeviceStore((s) => s.devices)
   const selectedDevice = useDeviceStore((s) => s.selectedDevice)
   const selectDevice = useDeviceStore((s) => s.selectDevice)
-  const [showAdd, setShowAdd] = useState(false)
 
   return (
     <div>
@@ -25,7 +23,7 @@ export function DeviceGrid({ onSendToDevice }: DeviceGridProps) {
             {devices.filter((d) => d.status === 'connected').length} of {devices.length} connected
           </p>
         </div>
-        <GlowButton icon={<Plus size={14} />} onClick={() => setShowAdd(true)}>
+        <GlowButton icon={<Plus size={14} />} onClick={onAddDevice}>
           Add Device
         </GlowButton>
       </div>
@@ -59,8 +57,6 @@ export function DeviceGrid({ onSendToDevice }: DeviceGridProps) {
           />
         ))}
       </motion.div>
-
-      <AddDeviceModal isOpen={showAdd} onClose={() => setShowAdd(false)} />
     </div>
   )
 }

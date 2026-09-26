@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowUpDown, CheckCircle, XCircle, Clock, Loader } from 'lucide-react'
+import { ArrowUpDown, CheckCircle, XCircle, Clock, Loader, Send } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useTransferStore } from '../../stores/transferStore'
 import { TransferCard } from './TransferCard'
+import { GlowButton } from '../shared/GlowButton'
 
 type FilterType = 'all' | 'active' | 'completed' | 'failed'
 
@@ -16,7 +17,11 @@ const filters: { id: FilterType; label: string; icon: any }[] = [
 
 const PAGE_SIZE = 60
 
-export function TransferList() {
+interface TransferListProps {
+  onSendFiles?: () => void
+}
+
+export function TransferList({ onSendFiles }: TransferListProps) {
   const [filter, setFilter] = useState<FilterType>('all')
   const [showOlder, setShowOlder] = useState(false)
   const transfers = useTransferStore((s) => s.transfers)
@@ -50,6 +55,11 @@ export function TransferList() {
             {activeCount} active • {completedCount} completed • {failedCount} failed
           </p>
         </div>
+        {onSendFiles && (
+          <GlowButton icon={<Send size={14} />} onClick={onSendFiles}>
+            Send Files
+          </GlowButton>
+        )}
       </div>
 
       <div className="flex items-center gap-2 mb-5">

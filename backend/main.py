@@ -63,15 +63,22 @@ class SyncFlowBackend:
         }
 
     async def _handle_send(self, data: dict) -> dict:
+        # Parse the transfer id first so every validation error below can
+        # reference it — the UI uses it to fail the right pending transfer.
+        transfer_id = data.get("transferId") or None
+        if transfer_id is not None and (not isinstance(transfer_id, str) or not TRANSFER_ID_RE.match(transfer_id)):
+            return {"type": "error", "error": "Invalid transfer id"}
+        tid = {"transferId": transfer_id} if transfer_id else {}
+
         target_ip = data.get("targetIp", "")
         file_paths = data.get("files", [])
 
         if not target_ip or not file_paths:
-            return {"type": "error", "error": "Missing target IP or files"}
+            return {"type": "error", "error": "Missing target IP or files", **tid}
         if not isinstance(target_ip, str) or not TARGET_HOST_RE.match(target_ip):
-            return {"type": "error", "error": "Invalid target address"}
+            return {"type": "error", "error": "Invalid target address", **tid}
         if not isinstance(file_paths, list) or len(file_paths) > MAX_FILES_PER_SEND:
-            return {"type": "error", "error": "Invalid file list"}
+            return {"type": "error", "error": "Invalid file list", **tid}
         file_paths = [fp for fp in file_paths if isinstance(fp, str)]
 
         try:
@@ -79,17 +86,13 @@ class SyncFlowBackend:
         except (TypeError, ValueError):
             target_port = 18974
         if not (0 < target_port < 65536):
-            return {"type": "error", "error": "Invalid target port"}
-
-        transfer_id = data.get("transferId") or None
-        if transfer_id is not None and (not isinstance(transfer_id, str) or not TRANSFER_ID_RE.match(transfer_id)):
-            return {"type": "error", "error": "Invalid transfer id"}
+            return {"type": "error", "error": "Invalid target port", **tid}
 
         expected_device_id = data.get("targetDeviceId") or None
         if expected_device_id is not None and (
             not isinstance(expected_device_id, str) or not TRANSFER_ID_RE.match(expected_device_id)
         ):
-            return {"type": "error", "error": "Invalid target device id"}
+            return {"type": "error", "error": "Invalid target device id", **tid}
 
         existing = [fp for fp in file_paths if os.path.exists(fp)]
         if not existing:
@@ -127,7 +130,7 @@ class SyncFlowBackend:
         return {"type": "transfer:cancelled", "transferId": transfer_id, "success": success}
 
     async def _handle_devices_list(self, data: dict) -> dict:
-        devices = self.mdns.get_found_devices()
+        devices = [d for d in self.mdns.get_found_devices() if d.get("id") != self.device_id]
         return {"type": "devices:update", "devices": devices}
 
     async def _handle_transfers_list(self, data: dict) -> dict:
@@ -288,6 +291,8 @@ class SyncFlowBackend:
             print(f"WS Bridge error: {e}", flush=True)
 
     def _on_device_found(self, device_info):
+        if device_info.get("id") == self.device_id:
+            return  # never surface our own advertisement as a peer
         print(f"Device found: {device_info['name']} ({device_info['ip']})", flush=True)
         if self.ws_bridge and self.ws_bridge.loop:
             asyncio.run_coroutine_threadsafe(
