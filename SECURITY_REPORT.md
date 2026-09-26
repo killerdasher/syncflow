@@ -10,9 +10,9 @@
 
 | Metric | Result |
 |---|---|
-| Attack classes executed | 24 distinct classes (55 individual checks) |
+| Attack classes executed | 26 distinct classes (60 individual checks) |
 | Vulnerabilities found & fixed | 20 pre-existing (V1–V20) + 6 defects exposed *by* the tests |
-| Final regression | **55/55 PASS** on fresh instances |
+| Final regression | **60/60 PASS** on fresh instances (`backend/tests/run_all.sh`, exit 0) |
 | Runtime dependency CVEs | **0** (npm runtime, pip-audit) |
 | Graceful shutdown | 257 ms, ports released |
 | Installers rebuilt & verified | AppImage 126 MB, deb 86 MB (hardened code verified inside) |
@@ -62,7 +62,12 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 
 ---
 
-## 3. Tests Conducted (Final Run: 55/55 PASS)
+## 3. Tests Conducted (Final Run: 60/60 PASS)
+
+The full harness lives in-repo at **`backend/tests/`** (it was previously
+lost to a `/tmp` wipe — reconstructed and extended) and runs end-to-end with
+one command: `backend/tests/run_all.sh` (starts fresh A+B instances, runs all
+six suites, tears down, exits non-zero on any failure).
 
 ### 3.1 Network / DoS (instance A, TCP 19974) — 7/7
 
@@ -74,11 +79,11 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 | T3 | 100-connection flood | PASS — exactly 64 held, 36 rejected, 0 KB growth |
 | T4a–c | Invalid JSON / non-object / wrong message type | PASS — instant close, server unaffected |
 
-### 3.2 Protocol / Crypto (raw hardened-protocol client vs A) — 19/19
+### 3.2 Protocol / Crypto (raw hardened-protocol client vs A) — 21/21
 
 | ID | Attack | Result |
 |---|---|---|
-| T26 | 1 MB transfer: verification + byte-identity + receiver-side leak check | PASS (no plaintext in 514 B of server traffic) |
+| T26 | 1 MB transfer: verification + byte-identity + receiver-side leak check | PASS (no plaintext in ~546 B of server traffic) |
 | T27 | Zero-byte file | PASS |
 | T28 | Multi-file incl. 5 MB | PASS |
 | T5 | `../../../../tmp/evil.txt` traversal | PASS — saved as basename inside receive dir; `/tmp` untouched |
@@ -87,26 +92,32 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 | T7 | Duplicate declared transferIds (concurrent) | PASS — unique receive ids, no collision |
 | T11a/b | Declared > actual / actual > declared size | PASS — rejected, no file |
 | T12a/b | Stale (1 h-old) offer / tampered offer signature | PASS — freshness + signature rejection logged |
-| T13 | Wrong expected `deviceId` | PASS — refused client-side |
+| T13 | Wrong expected `deviceId` via real `command:send` | PASS — engine reports identity mismatch (production path) |
 | T14 | Chunks signed by a different key than the handshake | PASS — sender_pubkey mismatch |
-| T16 | Bit-flip in chunk payload | PASS — hash mismatch, no file |
-| T19 | Chat flood (40 msgs) | PASS — rate-limited 30/60 s per IP |
+| T16 | Bit-flip in chunk payload | PASS — authentication failure, no file |
+| T19 | Chat flood (40 msgs) | PASS — rate-limited 30/60 s per IP, monotonic |
+| T20 | Control-char `senderName` | PASS — sanitized before storage (`peers.json` printable) |
+| T21 | 300-char transferId | PASS — regenerated, transfer still succeeds |
 | T22 | E2E chat over transfer port | PASS |
+| T23/T23b | Non-string chat text | PASS — rejected cleanly, server stays alive |
 
-### 3.3 WebSocket / Application (A, WS 18973) — 22/22
+### 3.3 WebSocket / Application (A, WS 18993) — 22/22
 
 | ID | Attack | Result |
 |---|---|---|
 | W1 | `Origin: http://evil.example.com` | PASS — HTTP 403 at handshake |
 | W2 | Allowed origins (`null`, dev, absent) | PASS |
 | W3–W5 | Bad JSON / non-object / unknown type on one connection | PASS — errors answered, session survives |
-| W6 | `downloadPath=/tmp/...` vs inside home | PASS — rejected / accepted |
+| W6a–c | `downloadPath=/tmp/...`, non-string path, valid home path | PASS — rejected / rejected / accepted |
 | W7a–c | Evil `targetIp` / `transferId` / approval id | PASS — validation errors |
 | W8a–c | 10 000-char XSS chat payload | PASS — capped 4000, control chars stripped, stored as inert text |
 | W9 | Chat A→B relayed E2E (mDNS-discovered) | PASS |
-| W10a–c | Approval: accept flow | PASS — holds at `awaiting`, completes after approve |
-| W11a–c | Approval: decline flow | PASS — sender informed, no file written |
+| W10 | Approval: accept flow | PASS — holds at `awaiting`, completes after approve |
+| W11 | Approval: decline flow | PASS — sender informed, no file written |
 | W12 | Cancel while awaiting approval | PASS — clean decline delivered |
+| W13 | Broadcast to 3 concurrent WS clients | PASS — same message reaches all (live-set snapshot fix) |
+| W14 | Approve unknown transferId | PASS — `success:false`, no crash |
+| W15 | identity:get ×2 | PASS — deviceId stable |
 | W0 | Server alive after suite | PASS |
 
 ### 3.4 Active MITM proxy (protocol-aware, real sockets → B via 19976) — 5/5
@@ -114,10 +125,10 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 | ID | Attack | Result |
 |---|---|---|
 | M1 | Passive forward proxy — transfer through MITM | PASS — completes end-to-end |
-| M2 | Full capture of MITM'd stream | PASS — 68 314 B captured, **zero** plaintext names/payload |
+| M2 | Full capture of MITM'd stream | PASS — 105 082 B captured, **zero** plaintext names/payload |
 | M3 | Bit-flip inside encrypted chunk in transit | PASS — `chunk failed authentication`, no file |
-| M4 | Attacker swaps responder's `signingPub` in accept | PASS — sender refuses (`identity mismatch / bad signature`) |
-| M5 | Different client key from a pinned address | PASS — TOFU: `peer identity … CHANGED (possible MITM)` |
+| M4 | Attacker swaps responder's `signingPub` in accept (validly re-signed) | PASS — TOFU pin: `peer identity … CHANGED (possible MITM)` |
+| M5 | Different client key from a pinned address | PASS — server rejects the offer before accepting |
 
 ### 3.5 mDNS rogue advertiser — 2/2
 
@@ -126,10 +137,19 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 | T17a | Malformed `id` in TXT | PASS — advertisement rejected |
 | T17b | Valid id + hostile name/mac/os | PASS — name control-stripped, `mac=unknown`, `os=unknown` |
 
-### 3.6 Additional checks
+### 3.6 Extra suite (checks missing from the original harness) — 3/3
+
+| ID | Attack / scenario | Result |
+|---|---|---|
+| X1 | 2 MB WS message (> 1 MB server `max_size`) | PASS — connection closed with code **1009**, server survives |
+| X2 | Approval timeout (60 s, nobody approves) | PASS — sender gets `Timed out waiting for approval`, receiver task `failed`, no file written |
+| X3 | Cancel during **active 1.5 GB streaming** | PASS — sender `cancelled`, receiver leaves no file or `.part` temp (attempt 1 of 3) |
+
+### 3.7 Additional checks
 
 - **SIGTERM:** clean shutdown in **257 ms**, both ports released, graceful log.
 - **Full app launch:** backend spawned, `Connected to Python backend`, renderer runs with `--enable-sandbox`, vite + WS + TCP up; clean teardown.
+- **AppImage final artifact smoke:** extracted packaged backend starts (TCP+WS listen), contains all hardening markers, zero references to deleted insecure modules, SIGTERM-clean, ports released.
 - **Supply chain:** `pip-audit` → *No known vulnerabilities*; `npm audit --omit=dev` → **0** (removed unused `react-router-dom`, CVE-2025-68470 class); dev-tooling-only findings remain (see §6).
 - **Secrets scan:** no keys/tokens/passwords committed; no key files outside the venv.
 - **Typecheck/build:** `tsc --noEmit` clean; `electron-vite build` clean; installers rebuilt and inspected (hardened strings present, deleted insecure modules absent).
@@ -160,7 +180,7 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 
 - **First-contact MITM:** TOFU + mDNS `deviceId` binding defeat impersonation once a peer is known or advertised, but a *transparent* proxy on the very first connection from a brand-new device cannot be distinguished without out-of-band verification (no QR/fingerprint UI yet).
 - **Same-host testing:** the MITM ran as a local proxy on real sockets; no external-host ARP/Wi-Fi attack was possible from this machine (would need a second host/adapter). The protocol properties tested (signatures, freshness, encryption, tamper rejection) are transport-independent.
-- **Approval timeout path** (60 s) was code-reviewed but not exercised end-to-end in the automated run (accept/decline/cancel were).
+- ~~**Approval timeout path** not exercised~~ — **closed**: X2 now exercises the full 60 s timeout end-to-end (both peers fail cleanly, no file).
 - **GUI rendering** was not screenshot-verified (locked session); renderer behavior verified via WS traffic, logs, and live processes.
 - **Dev-tooling CVEs** (vite/esbuild/electron-builder/tar chain, 17 findings) are build-time only — never shipped to users; fixing requires major-version bumps (`npm audit fix --force`).
 
@@ -171,7 +191,7 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 1. **Out-of-band key verification** — show a short fingerprint/QR per device and mark connections "verified" to close the first-contact gap.
 2. **Sign mDNS records** with the Ed25519 key (or challenge-response on connect) so discovery itself is authenticated; today discovery informs, the handshake proves.
 3. **Release signing** — GPG/SSH-sign AppImage & deb, add update-artifact signatures.
-4. **CI security gate** — run the five suites (`/tmp/opencode/t_*.py`, `mitm2.py` — worth moving into a repo `tests/` dir) plus `tsc`, `pip-audit`, `npm audit --omit=dev` on every change.
+4. **CI security gate** — *(implemented)* run `backend/tests/run_all.sh` (all 60 checks, fresh instances, non-zero exit on failure) plus `tsc --noEmit`, `pip-audit`, `npm audit --omit=dev` on every change.
 5. **Fuzz the frame parser** (header length, JSON, decrypt-failure paths) with a coverage-guided fuzzer.
 6. **Per-IP handshake rate limiting** on the TCP port (chat is limited; handshake floods rely on the global cap today).
 7. **Received-file hygiene** — strip executable bits, optional AV scan hook, quarantine folder before user approval of open/save.
@@ -185,14 +205,30 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 
 ## 7. Reproduction
 
-```bash
-# instances (fresh homes)
-SYNCFLOW_HOME=/tmp/opencode/sfA SYNCFLOW_TCP_PORT=19974 SYNCFLOW_WS_PORT=18973 backend/venv/bin/python3 backend/main.py
-SYNCFLOW_HOME=/tmp/opencode/sfB SYNCFLOW_TCP_PORT=19975 SYNCFLOW_WS_PORT=18975 backend/venv/bin/python3 backend/main.py
+One command runs everything (starts fresh A+B instances on test ports,
+runs all six suites, tears down, prints totals, exit 0 = green):
 
-backend/venv/bin/python3 /tmp/opencode/t_net.py         # DoS suite   (7)
-backend/venv/bin/python3 /tmp/opencode/t_proto.py       # protocol    (19)
-backend/venv/bin/python3 /tmp/opencode/t_ws.py          # WS/app      (22)
-backend/venv/bin/python3 /tmp/opencode/mitm2.py all     # MITM        (5)
-backend/venv/bin/python3 /tmp/opencode/t_mdns_rogue.py  # mDNS        (2)
+```bash
+backend/tests/run_all.sh          # 60 checks, ~5 min
 ```
+
+Individual suites (instances must already be running):
+
+```bash
+# instances (fresh homes; test WS ports 18993/18995 never collide with the app)
+SYNCFLOW_HOME=/tmp/opencode/sfA SYNCFLOW_TCP_PORT=19974 SYNCFLOW_WS_PORT=18993 backend/venv/bin/python3 backend/main.py
+SYNCFLOW_HOME=/tmp/opencode/sfB SYNCFLOW_TCP_PORT=19975 SYNCFLOW_WS_PORT=18995 backend/venv/bin/python3 backend/main.py
+
+backend/venv/bin/python3 backend/tests/t_net.py <A_pid>   # DoS / network (7)
+backend/venv/bin/python3 backend/tests/t_proto.py         # protocol/crypto (21)
+backend/venv/bin/python3 backend/tests/mitm2.py           # active MITM    (5)
+backend/venv/bin/python3 backend/tests/t_ws.py            # WS / app       (22)
+backend/venv/bin/python3 backend/tests/t_mdns_rogue.py    # rogue mDNS     (2)
+backend/venv/bin/python3 backend/tests/t_extra.py         # extra          (3)
+```
+
+Every suite prints `PASS`/`FAIL` lines plus a `RESULTS_JSON` summary.
+Harness location note: the suites were originally stored under `/tmp/opencode`
+and were wiped by a tmpfs reset; they now live permanently in the repo under
+`backend/tests/` (state/identity scratch dirs are still created under
+`/tmp/opencode` at run time).
