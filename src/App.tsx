@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Send } from 'lucide-react'
 import { TitleBar } from './components/shared/TitleBar'
@@ -15,9 +15,11 @@ import { StoragePage } from './components/Storage/StoragePage'
 import { SettingsPage } from './components/Settings/SettingsPage'
 import { ChatPage } from './components/Chat/ChatPage'
 import { useWebSocket } from './hooks/useWebSocket'
+import { useSyncEngine } from './hooks/useSyncEngine'
 import { useTransferStore } from './stores/transferStore'
 import { useDeviceStore } from './stores/deviceStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { useAppStore } from './stores/appStore'
 import type { Device, Transfer, FileItem } from './lib/types'
 
 // Real peer ids are sha256-derived 32-char hex; locally added devices use
@@ -33,6 +35,23 @@ function App() {
   const addTransfer = useTransferStore((s) => s.addTransfer)
   const devices = useDeviceStore((s) => s.devices)
   const deviceName = useSettingsStore((s) => s.settings.deviceName)
+  const navTarget = useAppStore((s) => s.navTarget)
+  const clearNavigate = useAppStore((s) => s.clearNavigate)
+
+  // Notification click (or any other code) may request a page switch
+  useEffect(() => {
+    if (!navTarget) return
+    setActiveTab(navTarget)
+    clearNavigate()
+  }, [navTarget, clearNavigate])
+
+  useEffect(() => {
+    if (window.electronAPI && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {})
+    }
+  }, [])
+
+  useSyncEngine()
 
   const connectedTargets = useMemo(
     () => devices.filter((d) => d.id !== 'self' && d.status === 'connected'),

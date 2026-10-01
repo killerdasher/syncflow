@@ -1,6 +1,6 @@
 # SyncFlow — Security Hardening & Penetration Test Report
 
-**Date:** 2026-09-25
+**Date:** 2026-09-25 · **Updated:** 2026-10-02
 **Scope:** Full application (Python asyncio backend, WebSocket bridge, Electron shell, mDNS discovery, packaging)
 **Method:** 20+ distinct attack classes executed against **live instances** (two real backends + a protocol-aware MITM proxy on real sockets) — no simulated/mock results. All findings were patched and the entire suite re-run to green.
 
@@ -10,9 +10,9 @@
 
 | Metric | Result |
 |---|---|
-| Attack classes executed | 26 distinct classes (60 individual checks) |
+| Scenarios executed | 26 attack classes + 3 hardening/feature scenarios (**63 individual checks**) |
 | Vulnerabilities found & fixed | 20 pre-existing (V1–V20) + 6 defects exposed *by* the tests |
-| Final regression | **60/60 PASS** on fresh instances (`backend/tests/run_all.sh`, exit 0) |
+| Final regression | **63/63 PASS** on fresh instances (`backend/tests/run_all.sh`, exit 0) |
 | Runtime dependency CVEs | **0** (npm runtime, pip-audit) |
 | Graceful shutdown | 257 ms, ports released |
 | Installers rebuilt & verified | AppImage 126 MB, deb 86 MB (hardened code verified inside) |
@@ -62,7 +62,7 @@ After the patch, every one of these is rejected, and the same MITM proxy capture
 
 ---
 
-## 3. Tests Conducted (Final Run: 60/60 PASS)
+## 3. Tests Conducted (Final Run: 63/63 PASS)
 
 The full harness lives in-repo at **`backend/tests/`** (it was previously
 lost to a `/tmp` wipe — reconstructed and extended) and runs end-to-end with
@@ -137,13 +137,16 @@ six suites, tears down, exits non-zero on any failure).
 | T17a | Malformed `id` in TXT | PASS — advertisement rejected |
 | T17b | Valid id + hostile name/mac/os | PASS — name control-stripped, `mac=unknown`, `os=unknown` |
 
-### 3.6 Extra suite (checks missing from the original harness) — 3/3
+### 3.6 Extra suite (checks missing from the original harness + new hardening scenarios) — 6/6
 
 | ID | Attack / scenario | Result |
 |---|---|---|
 | X1 | 2 MB WS message (> 1 MB server `max_size`) | PASS — connection closed with code **1009**, server survives |
 | X2 | Approval timeout (60 s, nobody approves) | PASS — sender gets `Timed out waiting for approval`, receiver task `failed`, no file written |
 | X3 | Cancel during **active 1.5 GB streaming** | PASS — sender `cancelled`, receiver leaves no file or `.part` temp (attempt 1 of 3) |
+| X4 | Sync-folder `destFolder` routing | PASS — configured folder receives the file; unknown and hostile (`../../evil`) names fall back to the download dir, no escape |
+| X5 | Pinned-identity change + `peers:forget` | PASS — second identity rejected while pinned; forged WS key → error; forget → re-pair succeeds |
+| X6 | `maxConcurrent=1` slot queueing | PASS — second send observed `pending` behind the active 1.5 GB transfer, both complete, both files verified on disk |
 
 ### 3.7 Additional checks
 
@@ -191,11 +194,11 @@ six suites, tears down, exits non-zero on any failure).
 1. **Out-of-band key verification** — show a short fingerprint/QR per device and mark connections "verified" to close the first-contact gap.
 2. **Sign mDNS records** with the Ed25519 key (or challenge-response on connect) so discovery itself is authenticated; today discovery informs, the handshake proves.
 3. **Release signing** — GPG/SSH-sign AppImage & deb, add update-artifact signatures.
-4. **CI security gate** — *(implemented)* run `backend/tests/run_all.sh` (all 60 checks, fresh instances, non-zero exit on failure) plus `tsc --noEmit`, `pip-audit`, `npm audit --omit=dev` on every change.
+4. **CI security gate** — *(implemented)* GitHub Actions workflow (`.github/workflows/ci.yml`) runs `backend/tests/run_all.sh` (all 63 checks, fresh instances, non-zero exit on failure) plus `tsc --noEmit` on every change.
 5. **Fuzz the frame parser** (header length, JSON, decrypt-failure paths) with a coverage-guided fuzzer.
 6. **Per-IP handshake rate limiting** on the TCP port (chat is limited; handshake floods rely on the global cap today).
 7. **Received-file hygiene** — strip executable bits, optional AV scan hook, quarantine folder before user approval of open/save.
-8. **Peer management UI** — show pinned fingerprints, one-click "forget/re-pin" (deleting `peers.json`), toast on identity change.
+8. **Peer management UI** — *(implemented)* Settings → Security shows pinned devices (name, key, first-seen/last-seen) with one-click **Forget** (`peers:forget` re-pins on next contact). Remaining: toast/badge on identity change (today the backend rejects the connection and logs it).
 9. **Bandwidth QoS** and resume/partial-transfer support for multi-GB files.
 10. **Relay deployment checklist** if ever exposed publicly: TLS termination, token rotation, rate limits, no plaintext LAN metadata.
 11. **Dependency cadence** — schedule monthly `npm audit` / `pip-audit` and Electron minor updates (currently 33.x).
@@ -209,7 +212,7 @@ One command runs everything (starts fresh A+B instances on test ports,
 runs all six suites, tears down, prints totals, exit 0 = green):
 
 ```bash
-backend/tests/run_all.sh          # 60 checks, ~5 min
+backend/tests/run_all.sh          # 63 checks, ~5 min
 ```
 
 Individual suites (instances must already be running):
@@ -224,7 +227,7 @@ backend/venv/bin/python3 backend/tests/t_proto.py         # protocol/crypto (21)
 backend/venv/bin/python3 backend/tests/mitm2.py           # active MITM    (5)
 backend/venv/bin/python3 backend/tests/t_ws.py            # WS / app       (22)
 backend/venv/bin/python3 backend/tests/t_mdns_rogue.py    # rogue mDNS     (2)
-backend/venv/bin/python3 backend/tests/t_extra.py         # extra          (3)
+backend/venv/bin/python3 backend/tests/t_extra.py         # extra          (6)
 ```
 
 Every suite prints `PASS`/`FAIL` lines plus a `RESULTS_JSON` summary.

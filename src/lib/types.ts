@@ -27,6 +27,8 @@ export interface Transfer {
   targetIp?: string
   targetDeviceId?: string
   verified?: boolean
+  destPath?: string
+  destFolder?: string
 }
 
 export interface FileItem {
@@ -42,11 +44,7 @@ export interface Settings {
   autoAccept: boolean
   downloadPath: string
   syncFolders: SyncFolder[]
-  relayServer: string
-  relayToken: string
-  encryptionEnabled: boolean
-  maxConcurrentTransfers: number
-  port: number
+  maxConcurrent: number
 }
 
 export interface SyncFolder {
@@ -55,6 +53,16 @@ export interface SyncFolder {
   remotePath: string
   enabled: boolean
   lastSync: number
+  /** Auto-sync interval in minutes: 0 = manual only, 1/5/15 */
+  interval: number
+}
+
+export interface PinnedPeer {
+  key: string
+  name: string
+  deviceId: string
+  firstSeen: number
+  lastSeen: number
 }
 
 export interface WsMessage {
@@ -84,11 +92,21 @@ declare global {
         minimize: () => void
         maximize: () => void
         close: () => void
+        focus: () => void
       }
       openFiles: () => Promise<FileItem[]>
       openDirectory: () => Promise<string | null>
       getFilePath: (file: File) => string
       getPath: (name: string) => Promise<string>
+      shell: {
+        open: (path: string) => Promise<string>
+        reveal: (path: string) => Promise<boolean>
+      }
+      sync: {
+        scan: (folderPath: string, lastSync: number) => Promise<
+          { files: { path: string; name: string; size: number }[]; error?: string } | undefined
+        >
+      }
     }
   }
 }

@@ -1,5 +1,6 @@
-import { HardDrive, Database, ArrowUpDown, CheckCircle, XCircle } from 'lucide-react'
+import { HardDrive, Database, ArrowUpDown, CheckCircle, XCircle, FolderOpen } from 'lucide-react'
 import { GlassCard } from '../shared/GlassCard'
+import { GlowButton } from '../shared/GlowButton'
 import { useTransferStore } from '../../stores/transferStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { formatBytes } from '../../lib/constants'
@@ -8,6 +9,10 @@ export function StoragePage() {
   const transfers = useTransferStore((s) => s.transfers)
   const deviceName = useSettingsStore((s) => s.settings.deviceName)
   const downloadPath = useSettingsStore((s) => s.settings.downloadPath)
+
+  const handleOpenFolder = () => {
+    if (downloadPath) window.electronAPI?.shell?.open(downloadPath)
+  }
 
   const selfLabel = deviceName || 'This Device'
   const completed = transfers.filter((t) => t.status === 'completed')
@@ -49,6 +54,9 @@ export function StoragePage() {
               <span className="text-frost-300">Download folder</span>
               <span className="text-frost-100 font-mono truncate ml-3">{downloadPath}</span>
             </div>
+            <GlowButton variant="secondary" size="sm" onClick={handleOpenFolder} icon={<FolderOpen size={13} />}>
+              Open download folder
+            </GlowButton>
             <div className="flex justify-between text-xs">
               <span className="text-frost-300">Received this session</span>
               <span className="text-frost-100">{formatBytes(receivedBytes)}</span>

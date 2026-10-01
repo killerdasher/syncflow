@@ -3,8 +3,22 @@ import { useDeviceStore } from '../stores/deviceStore'
 import { useTransferStore } from '../stores/transferStore'
 import { useChatStore } from '../stores/chatStore'
 import { useAppStore } from '../stores/appStore'
-import { useSettingsStore } from '../stores/settingsStore'
+import { usePeerStore } from '../stores/peerStore'
+import { useSettingsStore, applySettings } from '../stores/settingsStore'
 import type { ChatMessage, Transfer } from '../lib/types'
+
+function notify(title: string, body: string, onClick: () => void) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+  try {
+    const n = new Notification(title, { body, silent: false })
+    n.onclick = () => {
+      onClick()
+      n.close()
+    }
+  } catch {
+    /* notifications are best-effort */
+  }
+}
 
 export function useWebSocket() {
   const connected = useRef(false)
@@ -26,6 +40,13 @@ export function useWebSocket() {
 
   useEffect(() => {
     if (!window.electronAPI) return
+
+    const notified = new Set<string>()
+
+    const focusApp = (page: string) => {
+      window.electronAPI.window.focus()
+      useAppStore.getState().navigate(page)
+    }
 
     const ensureTransfer = (id: string, updates: Partial<Transfer>) => {
       const exists = useTransferStore.getState().transfers.some((t) => t.id === id)
@@ -69,7 +90,17 @@ export function useWebSocket() {
             ...(msg.fromDevice ? { fromDevice: msg.fromDevice } : {}),
             ...(msg.toDevice ? { toDevice: msg.toDevice } : {}),
             ...(msg.files ? { files: msg.files } : {}),
+            ...(msg.destPath ? { destPath: msg.destPath } : {}),
+            ...(msg.destFolder ? { destFolder: msg.destFolder } : {}),
           })
+          if (msg.status === 'awaiting' && !notified.has(msg.transferId)) {
+            notified.add(msg.transferId)
+            const from = msg.fromDevice || 'a device'
+            const name = Array.isArray(msg.files) && msg.files[0]?.name
+              ? `: ${msg.files[0].name}${msg.files.length > 1 ? ` +${msg.files.length - 1}` : ''}`
+              : ''
+            notify('Incoming transfer', `${from} wants to send you a file${name}`, () => focusApp('transfers'))
+          }
           break
         case 'transfer:complete':
           ensureTransfer(msg.transferId, {
@@ -78,7 +109,9 @@ export function useWebSocket() {
             speed: 0,
             endTime: Date.now(),
             ...(msg.verified != null ? { verified: msg.verified } : {}),
+            ...(msg.destPath ? { destPath: msg.destPath } : {}),
           })
+          useSettingsStore.getState().resolvePendingSync(msg.transferId, true)
           break
         case 'transfer:error':
           ensureTransfer(msg.transferId, {
@@ -86,6 +119,7 @@ export function useWebSocket() {
             error: msg.error,
             speed: 0,
           })
+          useSettingsStore.getState().resolvePendingSync(msg.transferId, false)
           break
         case 'transfer:cancelled':
           if (msg.success) {
@@ -106,8 +140,17 @@ export function useWebSocket() {
             })
           }
           break
+        case 'peers:list':
+        case 'peers:updated':
+          if (Array.isArray(msg.peers)) {
+            usePeerStore.getState().setPeers(msg.peers)
+          }
+          break
         case 'identity:info':
           if (msg.deviceId) setSelfId(msg.deviceId)
+          if (msg.deviceName && !useSettingsStore.getState().settings.deviceName) {
+            useSettingsStore.getState().updateSettings({ deviceName: msg.deviceName })
+          }
           break
         case 'chat:message': {
           const chatMsg: ChatMessage = {
@@ -120,6 +163,10 @@ export function useWebSocket() {
             self: msg.deviceId === useChatStore.getState().selfId,
           }
           addChatMessage(chatMsg)
+          if (!chatMsg.self && !notified.has(`chat-${msg.id}`)) {
+            notified.add(`chat-${msg.id}`)
+            notify(chatMsg.fromDevice || 'New message', chatMsg.text, () => focusApp('chat'))
+          }
           break
         }
         case 'chat:history':
@@ -149,13 +196,8 @@ export function useWebSocket() {
 
     window.electronAPI.send({ type: 'identity:get' })
     window.electronAPI.send({ type: 'devices:list' })
-
-    const s = useSettingsStore.getState().settings
-    window.electronAPI.send({
-      type: 'settings:apply',
-      downloadPath: s.downloadPath,
-      autoAccept: s.autoAccept,
-    })
+    window.electronAPI.send({ type: 'peers:list' })
+    applySettings()
 
     return () => {
       window.electronAPI.removeMessageListener()

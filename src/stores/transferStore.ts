@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { Transfer } from '../lib/types'
 
 type TransferInput = Partial<Transfer> & { id: string }
@@ -23,32 +24,49 @@ const defaultTransfer: Omit<Transfer, 'id'> = {
   startTime: Date.now(),
 }
 
-export const useTransferStore = create<TransferState>((set) => ({
-  transfers: [],
-  addTransfer: (input) =>
-    set((state) => {
-      const idx = state.transfers.findIndex((t) => t.id === input.id)
-      if (idx >= 0) {
-        return {
-          transfers: state.transfers.map((t, i) => (i === idx ? { ...t, ...input } : t)),
-        }
-      }
-      return { transfers: [{ ...defaultTransfer, ...input } as Transfer, ...state.transfers] }
+const TERMINAL = ['completed', 'failed', 'cancelled']
+
+export const useTransferStore = create<TransferState>()(
+  persist(
+    (set) => ({
+      transfers: [],
+      addTransfer: (input) =>
+        set((state) => {
+          const idx = state.transfers.findIndex((t) => t.id === input.id)
+          if (idx >= 0) {
+            return {
+              transfers: state.transfers.map((t, i) => (i === idx ? { ...t, ...input } : t)),
+            }
+          }
+          return { transfers: [{ ...defaultTransfer, ...input } as Transfer, ...state.transfers] }
+        }),
+      updateTransfer: (id, updates) =>
+        set((state) => ({
+          transfers: state.transfers.map((t) =>
+            t.id === id ? { ...t, ...updates } : t
+          ),
+        })),
+      removeTransfer: (id) =>
+        set((state) => ({
+          transfers: state.transfers.filter((t) => t.id !== id),
+        })),
+      cancelTransfer: (id) =>
+        set((state) => ({
+          transfers: state.transfers.map((t) =>
+            t.id === id ? { ...t, status: 'cancelled' as const } : t
+          ),
+        })),
     }),
-  updateTransfer: (id, updates) =>
-    set((state) => ({
-      transfers: state.transfers.map((t) =>
-        t.id === id ? { ...t, ...updates } : t
-      ),
-    })),
-  removeTransfer: (id) =>
-    set((state) => ({
-      transfers: state.transfers.filter((t) => t.id !== id),
-    })),
-  cancelTransfer: (id) =>
-    set((state) => ({
-      transfers: state.transfers.map((t) =>
-        t.id === id ? { ...t, status: 'cancelled' as const } : t
-      ),
-    })),
-}))
+    {
+      name: 'syncflow-transfers',
+      version: 1,
+      // History survives reloads; live transfers are re-created by the
+      // ongoing transfer:progress stream instead of being persisted.
+      partialize: (state) => ({
+        transfers: state.transfers
+          .filter((t) => TERMINAL.includes(t.status))
+          .slice(0, 100),
+      }),
+    }
+  )
+)

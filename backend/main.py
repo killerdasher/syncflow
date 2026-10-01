@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import json
 import os
 import re
 import signal
@@ -37,6 +38,31 @@ class SyncFlowBackend:
         self.ws_bridge: Optional[WebSocketBridge] = None
         self._running = False
         self._message_log: list[dict] = []
+        # Chat history survives restarts (bounded, written to the app home)
+        self._chat_path = os.path.join(
+            os.path.dirname(os.path.abspath(self.identity.storage_dir)), "chat_log.json"
+        )
+        self._load_chat_log()
+
+    def _load_chat_log(self):
+        try:
+            if os.path.exists(self._chat_path):
+                with open(self._chat_path, "r") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    self._message_log = [
+                        m for m in data[-500:] if isinstance(m, dict) and isinstance(m.get("text"), str)
+                    ]
+        except Exception:
+            self._message_log = []
+
+    def _save_chat_log(self):
+        try:
+            os.makedirs(os.path.dirname(self._chat_path), exist_ok=True)
+            with open(self._chat_path, "w") as f:
+                json.dump(self._message_log[-500:], f)
+        except Exception:
+            pass
 
     def _register_handlers(self):
         if not self.ws_bridge:
@@ -50,6 +76,8 @@ class SyncFlowBackend:
         self.ws_bridge.on("chat:history", self._handle_chat_history)
         self.ws_bridge.on("identity:get", self._handle_identity)
         self.ws_bridge.on("settings:apply", self._handle_settings)
+        self.ws_bridge.on("peers:list", self._handle_peers_list)
+        self.ws_bridge.on("peers:forget", self._handle_peers_forget)
         self.ws_bridge.on("transfer:approve", self._handle_approval)
         self.ws_bridge.on("transfer:decline", self._handle_approval)
 
@@ -94,6 +122,12 @@ class SyncFlowBackend:
         ):
             return {"type": "error", "error": "Invalid target device id", **tid}
 
+        dest_folder = data.get("destFolder") or None
+        if dest_folder is not None and (not isinstance(dest_folder, str) or len(dest_folder) > 64):
+            return {"type": "error", "error": "Invalid destination folder", **tid}
+        if dest_folder:
+            dest_folder = san(dest_folder, 64)
+
         existing = [fp for fp in file_paths if os.path.exists(fp)]
         if not existing:
             return {
@@ -105,6 +139,7 @@ class SyncFlowBackend:
         task = await self.transfer_engine.send_files(
             existing, target_ip, transfer_id=transfer_id,
             target_port=target_port, expected_device_id=expected_device_id,
+            dest_folder=dest_folder,
         )
 
         return {
@@ -161,6 +196,7 @@ class SyncFlowBackend:
         self._message_log.append(message)
         if len(self._message_log) > 500:
             self._message_log = self._message_log[-500:]
+        self._save_chat_log()
 
         if self.ws_bridge:
             await self.ws_bridge.send_message(message)
@@ -186,6 +222,7 @@ class SyncFlowBackend:
         self._message_log.append(message)
         if len(self._message_log) > 500:
             self._message_log = self._message_log[-500:]
+        self._save_chat_log()
         if self.ws_bridge:
             await self.ws_bridge.send_message(message)
 
@@ -209,11 +246,39 @@ class SyncFlowBackend:
     async def _handle_settings(self, data: dict) -> Optional[dict]:
         path = data.get("downloadPath")
         auto_accept = data.get("autoAccept")
+        device_name = data.get("deviceName")
+        max_concurrent = data.get("maxConcurrent")
+        sync_folders = data.get("syncFolders")
         reply: dict = {"type": "settings:applied"}
 
         if auto_accept is not None:
             self.transfer_engine.set_approval(not bool(auto_accept))
             reply["autoAccept"] = bool(auto_accept)
+
+        if device_name is not None:
+            if not isinstance(device_name, str):
+                return {"type": "error", "error": "Invalid device name"}
+            name = san(device_name.strip(), 48)
+            if name and name != self.device_name:
+                self.device_name = name
+                self.transfer_engine.device_name = name
+                try:
+                    await self.mdns.rename(name)
+                    reply["deviceName"] = name
+                except Exception as e:
+                    print(f"mDNS rename error: {san(e, 120)}", flush=True)
+                    reply["deviceName"] = name
+
+        if max_concurrent is not None:
+            try:
+                self.transfer_engine.set_max_concurrent(int(max_concurrent))
+                reply["maxConcurrent"] = self.transfer_engine.max_concurrent
+            except (TypeError, ValueError):
+                return {"type": "error", "error": "Invalid max concurrent value"}
+
+        if isinstance(sync_folders, list):
+            self.transfer_engine.set_sync_folders(sync_folders)
+            reply["syncFolders"] = len(self.transfer_engine.sync_folders)
 
         if path:
             if not isinstance(path, str):
@@ -231,6 +296,28 @@ class SyncFlowBackend:
                 return {"type": "error", "error": f"Invalid download path: {san(e, 120)}"}
 
         return reply if len(reply) > 1 else None
+
+    @staticmethod
+    def _peer_view(p: dict) -> dict:
+        view = {k: v for k, v in p.items() if k != "pub"}
+        view["deviceId"] = sha256_str(p.get("pub", ""))[:32]
+        return view
+
+    async def _handle_peers_list(self, data: dict) -> dict:
+        return {"type": "peers:list", "peers": [self._peer_view(p) for p in self.transfer_engine.trust.list_peers()]}
+
+    async def _handle_peers_forget(self, data: dict) -> dict:
+        key = data.get("key")
+        if not isinstance(key, str) or not re.match(r"^[A-Za-z0-9.:\-]{1,64}$", key):
+            return {"type": "error", "error": "Invalid peer key"}
+        success = self.transfer_engine.trust.forget(key)
+        remaining = self.transfer_engine.trust.list_peers()
+        return {
+            "type": "peers:updated",
+            "key": key,
+            "success": success,
+            "peers": [self._peer_view(p) for p in remaining],
+        }
 
     async def _on_transfer_progress(self, task):
         if self.ws_bridge and self.ws_bridge.loop:
@@ -251,6 +338,8 @@ class SyncFlowBackend:
                 "toDevice": task.to_device,
                 "files": file_list,
                 "startTime": int(task.start_time * 1000),
+                "destPath": (task.dest_paths[-1] if task.dest_paths else None),
+                "destFolder": task.dest_folder,
             })
 
             if task.status in ("completed", "failed", "cancelled"):

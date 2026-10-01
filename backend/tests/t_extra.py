@@ -1,9 +1,15 @@
-"""Extra suite: three checks missing from the original harness.
+"""Extra suite: checks missing from the original harness.
 
 X1 WS oversize message (2 MB > 1 MB server cap) -> close 1009, server lives.
 X2 approval timeout (60 s) -> sender & receiver both fail cleanly, no file.
 X3 cancel of an ACTIVE streaming transfer (1.5 GB) -> sender cancelled,
    receiver keeps no partial file.
+X4 sync-folder mapping -> destFolder lands in the receiver's configured
+   folder; unknown/hostile names fall back to the download dir.
+X5 peers:forget -> identity change rejected while pinned; forgetting the
+   pin allows re-pairing (reinstall recovery).
+X6 maxConcurrent=1 -> second send queues as 'pending' behind the active
+   one; both eventually complete.
 """
 import asyncio
 import glob
@@ -15,7 +21,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from proto_lib import *
 
-BIG_SRC = "/home/dasher/Downloads/.syncflow-cancel-src.bin"
+BIG_SRC = os.path.join(HOME_DIR, "Downloads", ".syncflow-cancel-src.bin")
 BIG_SIZE = 1500 * 1024 * 1024
 
 
@@ -183,10 +189,232 @@ def x2_approval_timeout():
     asyncio.run(ws_settings(WS_A, autoAccept=True))
 
 
+def x4_dest_folder_mapping():
+    alpha = os.path.join(DEST_A, "Alpha")
+    os.makedirs(alpha, exist_ok=True)
+    cleanup_dest(alpha, "x4-alpha")
+    cleanup_dest(DEST_A, "x4-fallback")
+    cleanup_dest(DEST_A, "x4-escape")
+
+    r = asyncio.run(ws_settings(WS_A, autoAccept=True, downloadPath=DEST_A))
+    if r.get("type") != "settings:applied":
+        ok("X4 dest-folder mapping (configured folder + safe fallback)", False, f"setup failed: {r}")
+        return
+    r = asyncio.run(ws_settings(WS_A, syncFolders=[{"localPath": alpha}]))
+    if r.get("syncFolders") != 1:
+        ok("X4 dest-folder mapping (configured folder + safe fallback)", False,
+           f"syncFolders not applied: {r}")
+        return
+
+    src1 = write_file(f"{ART}/x4-alpha.bin", b"lands in Alpha")
+    res1 = send_transfer(
+        [{"path": src1, "wire": "x4-alpha.bin"}],
+        target_port=TCP_A, identity=test_identity("sfT"), dest_folder="Alpha",
+    )
+    in_alpha = os.path.exists(os.path.join(alpha, "x4-alpha.bin"))
+
+    # Unconfigured folder name -> falls back to the download dir
+    src2 = write_file(f"{ART}/x4-fallback.bin", b"lands in download dir")
+    res2 = send_transfer(
+        [{"path": src2, "wire": "x4-fallback.bin"}],
+        target_port=TCP_A, identity=test_identity("sfT"), dest_folder="NoSuchFolder",
+    )
+    in_dest = os.path.exists(os.path.join(DEST_A, "x4-fallback.bin"))
+
+    # Hostile folder name (path traversal attempt) -> also falls back safely
+    src3 = write_file(f"{ART}/x4-escape.bin", b"must not escape")
+    res3 = send_transfer(
+        [{"path": src3, "wire": "x4-escape.bin"}],
+        target_port=TCP_A, identity=test_identity("sfT"), dest_folder="../../evil",
+    )
+    escaped = glob.glob(os.path.join(DEST_A, "..", "evil", "x4-escape.bin"))
+    in_dest3 = os.path.exists(os.path.join(DEST_A, "x4-escape.bin"))
+
+    asyncio.run(ws_settings(WS_A, syncFolders=[]))
+
+    ok(
+        "X4 dest-folder mapping: configured folder, unknown name, hostile name all handled",
+        res1.outcome == "completed" and in_alpha
+        and res2.outcome == "completed" and in_dest
+        and res3.outcome == "completed" and in_dest3 and not escaped,
+        f"r1={res1.outcome} in_alpha={in_alpha} r2={res2.outcome} in_dest={in_dest} "
+        f"r3={res3.outcome} in_dest3={in_dest3} escaped={escaped}",
+    )
+
+
+def x6_max_concurrent_slot():
+    ensure_big_src()
+    small = write_file(f"{ART}/x6-small.bin", b"queued behind the big one")
+    cleanup_dest(DEST_B, "syncflow-cancel-src")
+    cleanup_dest(DEST_B, "x6-small")
+    asyncio.run(ws_settings(WS_B, autoAccept=True, downloadPath=DEST_B))
+    asyncio.run(ws_settings(WS_A, maxConcurrent=1))
+
+    async def attempt():
+        async with WSConn(WS_A) as ws:
+            await ws.send({
+                "type": "command:send",
+                "targetIp": "127.0.0.1",
+                "targetPort": TCP_B,
+                "files": [BIG_SRC],
+            })
+            new1 = await ws.wait({"transfer:new", "error"}, timeout=10)
+            if new1.get("type") != "transfer:new":
+                return f"send_error:{new1.get('error')}", None, None
+            tid_big = new1["transfer"]["id"]
+
+            # Wait until the big transfer actually holds the slot
+            deadline = time.time() + 8
+            while time.time() < deadline:
+                await ws.send({"type": "transfers:list"})
+                upd = await ws.wait({"transfers:update"}, timeout=4)
+                done = [t for t in upd.get("completed", []) if t.get("id") == tid_big]
+                if done:
+                    return "big_finished_too_fast", tid_big, None
+                active = [t for t in upd.get("active", []) if t.get("id") == tid_big]
+                if active and active[0].get("status") == "transferring":
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                return "big_never_transferring", tid_big, None
+
+            await ws.send({
+                "type": "command:send",
+                "targetIp": "127.0.0.1",
+                "targetPort": TCP_B,
+                "files": [small],
+            })
+            new2 = await ws.wait({"transfer:new", "error"}, timeout=10)
+            if new2.get("type") != "transfer:new":
+                return f"send2_error:{new2.get('error')}", tid_big, None
+            tid_small = new2["transfer"]["id"]
+
+            # The small send must be observed queueing (pending) behind the slot
+            saw_pending = False
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                await ws.send({"type": "transfers:list"})
+                upd = await ws.wait({"transfers:update"}, timeout=4)
+                small_e = next(
+                    (t for t in upd.get("active", []) if t.get("id") == tid_small), None
+                )
+                big_done = any(
+                    t.get("id") == tid_big for t in upd.get("completed", [])
+                )
+                if small_e and small_e.get("status") == "pending" and not big_done:
+                    saw_pending = True
+                    break
+                if small_e and small_e.get("status") in ("transferring", "completed"):
+                    return "small_started_without_queue", tid_big, tid_small
+                await asyncio.sleep(0.02)
+            if not saw_pending:
+                return "small_never_pending", tid_big, tid_small
+
+            fb = await wait_completed_status(ws, tid_big, timeout=60)
+            fs = await wait_completed_status(ws, tid_small, timeout=30)
+            return "done", fb.get("status"), fs.get("status")
+
+    status, big_state, small_state = "init", None, None
+    attempts = 0
+    for i in range(3):
+        attempts = i + 1
+        status, big_state, small_state = asyncio.run(attempt())
+        if status == "done":
+            break
+        cleanup_dest(DEST_B, "syncflow-cancel-src")
+        cleanup_dest(DEST_B, "x6-small")
+        time.sleep(0.5)
+
+    big_files = glob.glob(os.path.join(DEST_B, "syncflow-cancel-src*"))
+    big_ok = (
+        len(big_files) == 1 and os.path.getsize(big_files[0]) == BIG_SIZE
+    )
+    small_files = glob.glob(os.path.join(DEST_B, "x6-small*"))
+    small_ok = len(small_files) == 1
+
+    asyncio.run(ws_settings(WS_A, maxConcurrent=4))
+
+    ok(
+        "X6 maxConcurrent=1: second send queues as pending, both complete",
+        status == "done" and big_state == "completed" and small_state == "completed"
+        and big_ok and small_ok,
+        f"status={status} big={big_state} small={small_state} "
+        f"big_file={big_ok} small_file={small_ok} attempts={attempts}",
+    )
+
+
+def x5_peers_forget():
+    src = write_file(f"{ART}/x5-pin.bin", b"pin and re-pin payload")
+
+    async def ws_baseline():
+        # Make the test self-contained: clear any existing pin first
+        await ws_call(WS_A, {"type": "peers:forget", "key": "127.0.0.1"}, {"peers:updated", "error"})
+        return await ws_call(WS_A, {"type": "peers:list"}, {"peers:list"})
+
+    asyncio.run(ws_baseline())
+
+    # 1) first contact with sfT -> pinned, transfer completes
+    r1 = send_transfer(
+        [{"path": src, "wire": "x5-pin.bin"}],
+        target_port=TCP_A, identity=test_identity("sfT"),
+        sender_name="X5 Sender", trust=trust_for("sfT"),
+    )
+
+    async def peers_now():
+        return await ws_call(WS_A, {"type": "peers:list"}, {"peers:list"})
+
+    listed = asyncio.run(peers_now())
+    keys = [p.get("key") for p in listed.get("peers", [])]
+
+    # 2) different identity from the same address -> rejected while pinned
+    wipe("sfPinOther")
+    r2 = send_transfer(
+        [{"path": src, "wire": "x5-pin2.bin"}],
+        target_port=TCP_A, identity=test_identity("sfOTHER"),
+        sender_name="Impostor", trust=trust_for("sfPinOther"),
+    )
+
+    # 3) bogus key -> error; real key -> forgotten (success)
+    bad = asyncio.run(ws_call(
+        WS_A, {"type": "peers:forget", "key": "not a valid key!"}, {"error"},
+    ))
+    forgot = asyncio.run(ws_call(
+        WS_A, {"type": "peers:forget", "key": "127.0.0.1"}, {"peers:updated", "error"},
+    ))
+    after = asyncio.run(peers_now())
+    keys_after = [p.get("key") for p in after.get("peers", [])]
+
+    # 4) after forgetting, the new identity re-pairs on next contact
+    r3 = send_transfer(
+        [{"path": src, "wire": "x5-pin3.bin"}],
+        target_port=TCP_A, identity=test_identity("sfOTHER"),
+        sender_name="Repaired Device", trust=trust_for("sfPinOther"),
+    )
+
+    baseline_ok = r1.outcome == "completed" and "127.0.0.1" in keys
+    rejected_ok = r2.outcome in ("handshake_failed", "rejected", "pin_changed")
+    forget_ok = (
+        bad.get("type") == "error"
+        and forgot.get("type") == "peers:updated" and forgot.get("success") is True
+        and "127.0.0.1" not in keys_after
+    )
+    repair_ok = r3.outcome == "completed"
+
+    ok(
+        "X5 peers:forget: change rejected while pinned; forget allows re-pairing",
+        baseline_ok and rejected_ok and forget_ok and repair_ok,
+        f"r1={r1.outcome} keys={keys} r2={r2.outcome}/{r2.error!r} "
+        f"bad={bad.get('type')} forgot={forgot} after={keys_after} r3={r3.outcome}",
+    )
+
+
 def main():
     x1_ws_oversize()
     x3_cancel_active()
     x2_approval_timeout()
+    x4_dest_folder_mapping()
+    x6_max_concurrent_slot()
+    x5_peers_forget()
     finish("t_extra")
 
 

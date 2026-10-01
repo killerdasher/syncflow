@@ -38,14 +38,14 @@ class MDNSDiscovery:
         self._on_found: Optional[Callable] = None
         self._on_lost: Optional[Callable] = None
 
-    async def register(self):
+    def _build_info(self) -> ServiceInfo:
         properties = self.device.to_mdns_properties()
         encoded_props = {k.encode(): v.encode() for k, v in properties.items()}
 
         # Unique, DNS-safe instance name so identical hostnames never collide
         label = f"{_safe_hostname(self.device.name)}-{self.device.id[:8]}"
 
-        self.service_info = ServiceInfo(
+        return ServiceInfo(
             MDNS_SERVICE_TYPE,
             f"{label}.{MDNS_SERVICE_TYPE}",
             addresses=[socket.inet_aton(self.device.ip)],
@@ -54,9 +54,31 @@ class MDNSDiscovery:
             server=f"{label}.local.",
         )
 
+    async def register(self):
+        self.service_info = self._build_info()
+
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self.zeroconf.register_service, self.service_info)
-        print(f"mDNS: Registered {label} on {self.device.ip}:{self.device.port}", flush=True)
+        print(f"mDNS: Registered {self.service_info.name} on {self.device.ip}:{self.device.port}", flush=True)
+
+    async def rename(self, new_name: str):
+        """Adopt a new display name: unregister the old instance, register a
+        new one. Used when the user changes the device name in Settings."""
+        new_name = _safe_name(new_name)
+        if not new_name or new_name == self.device.name:
+            return
+        old_info = self.service_info
+        self.device.name = new_name
+        new_info = self._build_info()
+        loop = asyncio.get_event_loop()
+        if old_info:
+            try:
+                await loop.run_in_executor(None, self.zeroconf.unregister_service, old_info)
+            except Exception:
+                pass
+        await loop.run_in_executor(None, self.zeroconf.register_service, new_info)
+        self.service_info = new_info
+        print(f"mDNS: Renamed to {new_name}", flush=True)
 
     def start_browsing(
         self,

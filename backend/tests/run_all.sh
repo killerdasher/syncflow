@@ -30,8 +30,8 @@ done
 sleep 1
 
 # --- fresh state ------------------------------------------------------
-rm -rf "$ART/sfA" "$ART/sfB" "$ART/sfT" "$ART/sfOTHER" "$ART/sfM" "$ART/sfATK" "$ART/sfPin"
-rm -rf /home/dasher/Downloads/SyncFlow-testA /home/dasher/Downloads/SyncFlow-testB
+rm -rf "$ART/sfA" "$ART/sfB" "$ART/sfT" "$ART/sfOTHER" "$ART/sfM" "$ART/sfATK" "$ART/sfPin" "$ART/sfPinOther"
+rm -rf "$HOME/Downloads/SyncFlow-testA" "$HOME/Downloads/SyncFlow-testB"
 
 # --- start instances --------------------------------------------------
 env SYNCFLOW_HOME="$ART/sfA" SYNCFLOW_TCP_PORT=19974 SYNCFLOW_WS_PORT=18993 \

@@ -1,11 +1,12 @@
 import { memo } from 'react'
 import { motion } from 'framer-motion'
-import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban, Clock } from 'lucide-react'
+import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban, Clock, FolderOpen } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Transfer } from '../../lib/types'
 import { formatBytes, formatSpeed, formatDuration } from '../../lib/constants'
 import { ProgressRing } from './ProgressRing'
 import { useTransferStore } from '../../stores/transferStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 
 interface TransferCardProps {
   transfer: Transfer
@@ -73,6 +74,16 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
     if (window.electronAPI) {
       await window.electronAPI.send({ type: 'transfer:decline', transferId: transfer.id })
     }
+  }
+
+  // Received files: destPath from the backend. Sent files: reveal the local source.
+  const revealPath = transfer.destPath || (transfer.fromDevice === (useSettingsStore.getState().settings.deviceName || 'This Device')
+    ? transfer.files.find((f) => f.path)?.path
+    : undefined)
+  const canReveal = isCompleted && !!revealPath && !!window.electronAPI?.shell?.reveal
+
+  const handleReveal = () => {
+    if (revealPath) window.electronAPI?.shell?.reveal(revealPath)
   }
 
   return (
@@ -144,6 +155,16 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
                   className="w-7 h-7 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/10 transition-colors"
                 >
                   <RotateCcw size={12} />
+                </button>
+              )}
+              {canReveal && (
+                <button
+                  onClick={handleReveal}
+                  aria-label="Show in folder"
+                  title="Show in folder"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-frost-300 hover:text-cyber-teal hover:bg-cyber-teal/10 transition-colors"
+                >
+                  <FolderOpen size={12} />
                 </button>
               )}
             </div>

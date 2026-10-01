@@ -32,8 +32,10 @@ TCP_A, TCP_B, TCP_MITM = 19974, 19975, 19976
 # SyncFlow instance never collides with the test instances.
 WS_A, WS_B = 18993, 18995
 
-DEST_A = "/home/dasher/Downloads/SyncFlow-testA"
-DEST_B = "/home/dasher/Downloads/SyncFlow-testB"
+# Portable (CI-safe): derive from the invoking user's home
+HOME_DIR = os.path.realpath(os.path.expanduser("~"))
+DEST_A = os.path.join(HOME_DIR, "Downloads", "SyncFlow-testA")
+DEST_B = os.path.join(HOME_DIR, "Downloads", "SyncFlow-testB")
 
 CHUNK = 65536
 JSON_MAX = 256 * 1024
@@ -245,6 +247,7 @@ def send_transfer(
     decision_timeout=90.0,
     stream_timeout=30.0,
     send_complete=True,
+    dest_folder=None,             # optional sync-folder name (receiver maps it)
 ):
     """Mirror of the hardened engine sender, with attack hooks.
 
@@ -305,6 +308,8 @@ def send_transfer(
                 for i, f in enumerate(files)
             ],
         }
+        if dest_folder:
+            meta["destFolder"] = dest_folder
         send_blob(s, session.encrypt(json.dumps(meta).encode()), stream_timeout)
 
         res.stage = "decision"

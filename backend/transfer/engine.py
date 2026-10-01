@@ -87,6 +87,11 @@ class TransferTask:
         self.to_device: Optional[str] = None
         self.expected_device_id: Optional[str] = None
         self.declared_id: Optional[str] = None
+        # sender: optional destination folder name the receiver maps to one of
+        # ITS configured sync folders; receiver: resolved absolute dir.
+        self.dest_folder: Optional[str] = None
+        self.dest_dir: Optional[str] = None
+        self.dest_paths: list[str] = []
         self._last_emit = 0.0
         self._writer: Optional[asyncio.StreamWriter] = None
 
@@ -124,11 +129,67 @@ class TransferEngine:
             os.path.join(os.path.dirname(os.path.abspath(self.identity.storage_dir)), "peers.json")
         )
         self._chat_times: dict[str, list[float]] = {}
+        # Outbound concurrency: at most `max_concurrent` simultaneous sends
+        self.max_concurrent = 4
+        self._active_sends = 0
+        self._slot_cond = asyncio.Condition()
+        # Receiver-side sync folders: basename -> absolute path (validated,
+        # inside home). An incoming destFolder only ever maps to one of these.
+        self.sync_folders: dict[str, str] = {}
         os.makedirs(self._receive_dir, exist_ok=True)
 
     def set_receive_dir(self, path: str):
         self._receive_dir = path
         os.makedirs(self._receive_dir, exist_ok=True)
+
+    def set_max_concurrent(self, n: int):
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return
+        self.max_concurrent = max(1, min(n, 8))
+
+    def set_sync_folders(self, folders: list):
+        """Configure receiver-side sync folders (basename -> realpath).
+        Only folders inside the user's home are accepted."""
+        home = os.path.realpath(os.path.expanduser("~"))
+        mapping: dict[str, str] = {}
+        for entry in folders[:50]:
+            if not isinstance(entry, dict):
+                continue
+            local = entry.get("localPath")
+            if not isinstance(local, str) or not local:
+                continue
+            try:
+                real = os.path.realpath(os.path.expanduser(local))
+            except (OSError, ValueError):
+                continue
+            if real == home or not real.startswith(home + os.sep):
+                continue
+            name = san(os.path.basename(real), 64)
+            if name and name not in (".", ".."):
+                mapping.setdefault(name, real)
+        self.sync_folders = mapping
+
+    async def _acquire_slot(self, task: Optional["TransferTask"] = None) -> bool:
+        async with self._slot_cond:
+            while self._active_sends >= self.max_concurrent:
+                if task is not None and task._cancelled:
+                    return False
+                try:
+                    await asyncio.wait_for(self._slot_cond.wait(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    continue
+            self._active_sends += 1
+            return True
+
+    async def _release_slot(self):
+        try:
+            async with self._slot_cond:
+                self._active_sends = max(0, self._active_sends - 1)
+                self._slot_cond.notify()
+        except Exception:
+            pass
 
     def set_progress_callback(self, callback: Callable):
         self._progress_callback = callback
@@ -239,7 +300,7 @@ class TransferEngine:
     # Sending
     # ------------------------------------------------------------------
 
-    async def send_files(self, file_paths: list[str], target_ip: str, target_port: int = 18974, transfer_id: Optional[str] = None, expected_device_id: Optional[str] = None) -> TransferTask:
+    async def send_files(self, file_paths: list[str], target_ip: str, target_port: int = 18974, transfer_id: Optional[str] = None, expected_device_id: Optional[str] = None, dest_folder: Optional[str] = None) -> TransferTask:
         files = []
         for fp in file_paths:
             if os.path.exists(fp) and not os.path.isdir(fp):
@@ -253,14 +314,22 @@ class TransferEngine:
 
         task = TransferTask(files, target_ip, target_port, transfer_id=transfer_id)
         task.expected_device_id = expected_device_id
+        task.dest_folder = san(dest_folder, 64) if dest_folder else None
         self.active_transfers[task.id] = task
         asyncio.create_task(self._execute_transfer(task))
         return task
 
     async def _execute_transfer(self, task: TransferTask):
         writer: Optional[asyncio.StreamWriter] = None
+        slot = False
         try:
             task.status = "pending"
+            # Wait for a concurrency slot before opening the connection
+            if not await self._acquire_slot(task):
+                task.status = "cancelled"
+                task.error = task.error or "Cancelled"
+                return
+            slot = True
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(task.target_ip, task.target_port), CONNECT_TIMEOUT
             )
@@ -311,6 +380,8 @@ class TransferEngine:
                     for f in task.files
                 ],
             }
+            if task.dest_folder:
+                meta["destFolder"] = task.dest_folder
             await self._write_enc(writer, session, meta, STREAM_TIMEOUT, MAX_META_BLOB)
 
             decision = await self._read_enc(reader, session, DECISION_TIMEOUT, MAX_META_BLOB)
@@ -368,6 +439,8 @@ class TransferEngine:
                     await self._progress_callback(task)
                 except Exception:
                     pass
+            if slot:
+                await self._release_slot()
 
     async def _send_file(self, reader, writer, file_info: dict, task: TransferTask, session: SessionCrypto):
         file_path = file_info["path"]
@@ -540,6 +613,14 @@ class TransferEngine:
             transfer_id = str(meta.get("transferId", ""))
             if not TRANSFER_ID_RE.match(transfer_id):
                 transfer_id = str(uuid.uuid4())
+
+            # Sync-folder routing: the sender may name a destination folder,
+            # but it only ever resolves against folders THIS device configured
+            # (exact basename match). Anything unknown falls back to the
+            # download directory — a peer can never choose an arbitrary path.
+            dest_folder = san(meta.get("destFolder", ""), 64)
+            resolved_dir = self.sync_folders.get(dest_folder) if dest_folder else None
+
             # Unique receive id: sender's id is only advisory (never trusted
             # for bookkeeping), so concurrent receives can never collide and
             # received ids can never clash with local send ids.
@@ -547,6 +628,8 @@ class TransferEngine:
                 files, target_ip=src_ip, transfer_id=f"in-{uuid.uuid4().hex[:16]}"
             )
             task.declared_id = transfer_id
+            task.dest_dir = resolved_dir
+            task.dest_folder = dest_folder or None
             task.from_device = sender_name
             task.to_device = "This Device"
             task.verified = False
@@ -695,17 +778,21 @@ class TransferEngine:
         if sanitize_filename(str(file_meta.get("name", ""))) != expected_name or file_meta.get("size") != expected_size:
             raise IntegrityError("file metadata mismatch with declared transfer")
 
-        dest_path = os.path.join(self._receive_dir, expected_name)
-        real_dir = os.path.realpath(self._receive_dir)
-        real_dest = os.path.realpath(dest_path)
-        if not (real_dest == real_dir or real_dest.startswith(real_dir + os.sep)):
-            raise IntegrityError("destination escapes receive directory")
+        base_dir = task.dest_dir or self._receive_dir
+        dest_path = os.path.join(base_dir, expected_name)
 
         counter = 1
         while os.path.exists(dest_path):
             stem, ext = os.path.splitext(expected_name)
-            dest_path = os.path.join(self._receive_dir, f"{stem}_{counter}{ext}")
+            dest_path = os.path.join(base_dir, f"{stem}_{counter}{ext}")
             counter += 1
+
+        # Confinement check AFTER the unique-name loop: the final path must
+        # stay inside the chosen directory (symlink escape defense).
+        real_dir = os.path.realpath(base_dir)
+        real_dest = os.path.realpath(dest_path)
+        if not (real_dest == real_dir or real_dest.startswith(real_dir + os.sep)):
+            raise IntegrityError("destination escapes receive directory")
 
         tmp_path = dest_path + f".part-{uuid.uuid4().hex[:8]}"
         block_hashes: list[str] = []
@@ -788,6 +875,7 @@ class TransferEngine:
                 raise IntegrityError("manifest sender key mismatch")
 
             os.replace(tmp_path, dest_path)
+            task.dest_paths.append(dest_path)
             if manifest.get("transferId"):
                 self.verified_transfers[str(manifest.get("transferId"))] = {
                     "fileName": expected_name,

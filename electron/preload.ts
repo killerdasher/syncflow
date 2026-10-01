@@ -18,9 +18,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
+    focus: () => ipcRenderer.send('window:focus'),
   },
   openFiles: () => ipcRenderer.invoke('dialog:openFiles'),
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
   getFilePath: (file: File) => webUtils.getPathForFile(file),
   getPath: (name: string) => ipcRenderer.invoke('app:getPath', name),
+  shell: {
+    open: (path: string) => ipcRenderer.invoke('shell:open', path),
+    reveal: (path: string) => ipcRenderer.invoke('shell:reveal', path),
+  },
+  sync: {
+    scan: (folderPath: string, lastSync: number) =>
+      ipcRenderer.invoke('sync:scan', folderPath, lastSync),
+  },
 })

@@ -288,3 +288,27 @@ class PeerTrustStore:
             f"peer identity for {key} CHANGED (possible MITM) — if the device "
             f"was reinstalled, delete {self.path} to re-pin"
         )
+
+    def list_peers(self) -> list[dict]:
+        """Snapshot of pinned peers for the UI (peers:list)."""
+        out = []
+        for key in sorted(self._peers):
+            rec = self._peers.get(key)
+            if not isinstance(rec, dict):
+                continue
+            out.append({
+                "key": key,
+                "name": str(rec.get("name", ""))[:64],
+                "pub": str(rec.get("pub", ""))[:128],
+                "firstSeen": rec.get("firstSeen", 0),
+                "lastSeen": rec.get("lastSeen", 0),
+            })
+        return out
+
+    def forget(self, key: str) -> bool:
+        """Remove a pin so the peer re-pairs on next contact (reinstall recovery)."""
+        if key in self._peers:
+            del self._peers[key]
+            self._save()
+            return True
+        return False

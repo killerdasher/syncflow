@@ -89,21 +89,38 @@ SyncFlow/
 │   └── lib/           # Types and constants
 ├── backend/           # Python backend
 │   ├── discovery/     # mDNS device discovery (zeroconf)
-│   ├── transfer/      # File transfer engine (TCP + chunking)
-│   ├── networking/    # TCP server/client, relay client
-│   ├── crypto/        # AES-256 encryption + key management
-│   └── relay/         # Standalone relay server for WAN
+│   ├── transfer/      # File transfer engine (TCP + chunking + sync folders)
+│   ├── networking/    # TCP server/client
+│   ├── crypto/        # E2E crypto (AES-GCM, Ed25519, X25519) + trust store
+│   ├── relay/         # Standalone relay server module (not wired into the UI)
+│   └── tests/         # Security suite (run_all.sh, 63 checks)
 └── build/             # App icons
 ```
 
 ## Features
 
-- **Device Discovery**: Automatic LAN discovery via mDNS/Bonjour
-- **File Transfer**: Chunked TCP transfer with resume support (up to 10GB)
-- **Auto-Sync**: Continuous folder synchronization with filesystem watching
-- **Encryption**: AES-256-GCM + TLS 1.3
-- **WAN Relay**: Self-hosted relay server for internet transfers
+- **Device Discovery**: Automatic LAN discovery via mDNS/Bonjour (plus manual IP add)
+- **File Transfer**: Chunked TCP transfer with end-to-end encryption (up to 10 GB)
+- **Sync Folders**: Pair a local folder with a device — push new/changed files manually or on an interval (1/5/15 min), routed into a folder the peer configured itself
+- **Security**: AES-256-GCM end-to-end encryption, Ed25519 signatures, X25519 key exchange, trust-on-first-use pinning (manageable in Settings → Security), per-chunk SHA-256 verification with blockchain-style chaining
+- **Pinned Devices**: See and forget paired devices (Settings → Security)
+- **Notifications**: Desktop notifications for incoming transfers and chat (click focuses the app)
+- **History**: Transfer history and chat log persist across restarts
 - **Dark Theme**: Navy blue + dark aqua with animated particles and glass morphism
+
+> **Honest scope:** transfers use a direct LAN connection with application-layer
+> end-to-end encryption — there is **no TLS layer** and no WAN relay in the UI.
+> See `SECURITY_REPORT.md` for the full threat model and test evidence.
+
+## Tests
+
+```bash
+backend/tests/run_all.sh    # 63 checks against fresh live instances, ~5 min
+```
+
+Starts two backend instances on test ports, runs six suites (DoS, protocol/crypto,
+active MITM proxy, WebSocket/app, rogue mDNS, extra scenarios), tears down,
+prints totals. Exit 0 = all green. Typecheck with `npx tsc --noEmit`.
 
 ## Technology Stack
 
@@ -116,5 +133,5 @@ SyncFlow/
 | Backend | Python 3.13 (asyncio) |
 | Discovery | zeroconf (mDNS) |
 | Transfer | Custom TCP protocol |
-| Encryption | cryptography (AES-256-GCM) |
+| Encryption | cryptography (AES-256-GCM, Ed25519, X25519) |
 | Build | electron-vite + electron-builder |

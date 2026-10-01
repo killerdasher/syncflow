@@ -93,12 +93,13 @@ def t28_multi_file():
 
 
 def t5_traversal():
-    for p in (
+    escape_targets = (
         "/tmp/evil-syncflow-test.txt",
-        "/home/dasher/Downloads/evil-syncflow-test.txt",
-        "/home/dasher/evil-syncflow-test.txt",
-        "/home/dasher/Downloads/tmp/evil-syncflow-test.txt",
-    ):
+        os.path.join(HOME_DIR, "Downloads", "evil-syncflow-test.txt"),
+        os.path.join(HOME_DIR, "evil-syncflow-test.txt"),
+        os.path.join(HOME_DIR, "Downloads", "tmp", "evil-syncflow-test.txt"),
+    )
+    for p in escape_targets:
         try:
             os.unlink(p)
         except OSError:
@@ -107,12 +108,7 @@ def t5_traversal():
         {"path": f"{SRC}/trav-src.txt", "wire": "../../../../tmp/evil-syncflow-test.txt"},
     ])
     confined = glob.glob(os.path.join(DEST_A, "evil-syncflow-test*.txt"))
-    escaped = any(os.path.exists(p) for p in (
-        "/tmp/evil-syncflow-test.txt",
-        "/home/dasher/Downloads/evil-syncflow-test.txt",
-        "/home/dasher/evil-syncflow-test.txt",
-        "/home/dasher/Downloads/tmp/evil-syncflow-test.txt",
-    ))
+    escaped = any(os.path.exists(p) for p in escape_targets)
     ok(
         "T5 path traversal confined to receive dir",
         r.outcome == "completed" and confined and not escaped,

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell } from 'electron'
 import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { WebSocket } from 'ws'
@@ -10,6 +10,7 @@ let pythonProcess: ChildProcess | null = null
 let wsConnection: WebSocket | null = null
 let pythonPort = 0
 let backendConnected = false
+let isQuitting = false
 
 function sendBackendStatus(): void {
   mainWindow?.webContents.send('backend:status', { connected: backendConnected })
@@ -169,6 +170,14 @@ function createWindow(): void {
 
   mainWindow.webContents.on('did-finish-load', sendBackendStatus)
 
+  // Close hides to tray; real quit happens from the tray menu / before-quit
+  mainWindow.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      mainWindow?.hide()
+    }
+  })
+
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -215,6 +224,10 @@ function createTray(): void {
   })
 }
 
+app.on('before-quit', () => {
+  isQuitting = true
+})
+
 app.whenReady().then(async () => {
   // Renderer may only ever load our own UI — block any navigation away
   // (e.g. crafted content redirecting the app window) and popups.
@@ -259,6 +272,76 @@ ipcMain.on('window:maximize', () => {
   }
 })
 ipcMain.on('window:close', () => mainWindow?.close())
+ipcMain.on('window:focus', () => {
+  mainWindow?.show()
+  mainWindow?.focus()
+})
+
+// File-manager actions — every path is confined to the user's home directory
+function confineToHome(target: string): string | null {
+  try {
+    const expanded = target.startsWith('~')
+      ? join(app.getPath('home'), target.slice(1))
+      : target
+    const real = fs.realpathSync(expanded)
+    const home = fs.realpathSync(app.getPath('home'))
+    if (real !== home && !real.startsWith(home + require('path').sep)) return null
+    return real
+  } catch {
+    return null
+  }
+}
+
+ipcMain.handle('shell:open', (_event, target: unknown) => {
+  if (typeof target !== 'string' || !target) return 'Invalid path'
+  const real = confineToHome(target)
+  if (!real) return 'Path must be inside your home directory'
+  return shell.openPath(real)
+})
+
+ipcMain.handle('shell:reveal', (_event, target: unknown) => {
+  if (typeof target !== 'string' || !target) return false
+  const real = confineToHome(target)
+  if (!real) return false
+  shell.showItemInFolder(real)
+  return true
+})
+
+// Sync-folder scanner: top-level files changed since `lastSync` (mtimeMs).
+// Used by the Sync page to decide what to push to a peer.
+const MAX_SCAN_FILES = 1000
+
+ipcMain.handle('sync:scan', (_event, folderPath: unknown, lastSync: unknown) => {
+  if (typeof folderPath !== 'string' || !folderPath) return { error: 'Invalid folder' }
+  const real = confineToHome(folderPath)
+  if (!real) return { error: 'Folder must be inside your home directory' }
+  let stat: import('fs').Stats
+  try {
+    stat = fs.statSync(real)
+  } catch {
+    return { error: 'Folder does not exist' }
+  }
+  if (!stat.isDirectory()) return { error: 'Not a folder' }
+  const since = typeof lastSync === 'number' && lastSync > 0 ? lastSync : 0
+  try {
+    const entries = fs.readdirSync(real, { withFileTypes: true })
+    const files: { path: string; name: string; size: number }[] = []
+    for (const entry of entries) {
+      if (files.length >= MAX_SCAN_FILES) break
+      if (!entry.isFile()) continue
+      const full = join(real, entry.name)
+      try {
+        const s = fs.statSync(full)
+        if (s.mtimeMs > since) files.push({ path: full, name: entry.name, size: s.size })
+      } catch {
+        continue
+      }
+    }
+    return { files }
+  } catch (e) {
+    return { error: String((e as Error).message || e) }
+  }
+})
 
 ipcMain.handle('ws:send', (_event, msg) => {
   if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {

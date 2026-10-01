@@ -1,10 +1,8 @@
 import { Minus, Square, X, Wifi, Shield } from 'lucide-react'
 import { useDeviceStore } from '../../stores/deviceStore'
-import { useSettingsStore } from '../../stores/settingsStore'
 
 export function TitleBar() {
   const devices = useDeviceStore((s) => s.devices)
-  const settings = useSettingsStore((s) => s.settings)
   const connectedCount = devices.filter((d) => d.status === 'connected').length
 
   return (
@@ -19,12 +17,10 @@ export function TitleBar() {
             <Wifi size={12} className="text-cyber-teal" />
             {connectedCount} device{connectedCount !== 1 ? 's' : ''}
           </span>
-          {settings.encryptionEnabled && (
-            <span className="flex items-center gap-1">
-              <Shield size={12} className="text-cyber-teal" />
-              Encrypted
-            </span>
-          )}
+          <span className="flex items-center gap-1">
+            <Shield size={12} className="text-cyber-teal" />
+            End-to-end encrypted
+          </span>
         </div>
       </div>
 
