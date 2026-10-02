@@ -1,4 +1,4 @@
-zeroconf>=0.131.0
+zeroconf>=0.151.5
 websockets>=12.0
 aiofiles>=23.0
 watchdog>=6.0.0
