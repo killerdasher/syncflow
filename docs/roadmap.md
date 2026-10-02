@@ -13,7 +13,8 @@ security suite, automated 3-OS releases.
 
 | Item | Notes |
 |------|-------|
-| Android **companion** app | Phone UI (Capacitor-wrapped React) drives the desktop over LAN: pairing-code auth on a LAN WebSocket mode of the backend. Phone shows chat/devices/transfers while the desktop is on. Build APK in CI, publish to Releases. |
+| Android **companion** app | Full phased plan (backend LAN mode + pairing-code auth → transport shim → APK + CI → uploads) in [mobile.md](mobile.md). Phone drives the desktop over LAN: chat/devices/transfers while the desktop is on. APK published to Releases. |
+| iOS companion | Same plan in [mobile.md](mobile.md): CI compile-check now ($0), TestFlight when an Apple Developer account ($99/yr) exists. |
 | Code signing | SignPath OSS for Windows (see [code-signing.md](code-signing.md)); Apple Developer ID when budget allows (see [macos.md](macos.md)). |
 | Auto-update | electron-updater against GitHub Releases — after signing exists, so updates are verifiable. |
 
@@ -21,8 +22,7 @@ security suite, automated 3-OS releases.
 
 | Item | Notes |
 |------|-------|
-| Standalone Android | Native port of the protocol (X25519/Ed25519/AES-GCM, TCP framing, mDNS) so the phone works **without** the desktop. Large effort; companion first validates demand. |
-| iOS | Requires a Mac + Apple Developer account ($99/yr) + Xcode; release via TestFlight/App Store. Blocked on those prerequisites. |
+| Standalone Android | Native port of the protocol (X25519/Ed25519/AES-GCM, TCP framing, mDNS) so the phone works **without** the desktop. Large effort; companion first validates demand — see [mobile.md](mobile.md). |
 | Flatpak / Snap | Alternative Linux stores after the core releases are stable. |
 | WAN / relay | **Not planned.** SyncFlow is deliberately LAN-only — the honest scope stays unless the threat model is redesigned. |
 
