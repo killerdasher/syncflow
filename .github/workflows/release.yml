@@ -108,13 +108,13 @@ jobs:
         # Bare pip/python3 on this image resolve to the arm64 framework Python —
         # always address the setup-python interpreter explicitly instead
         run: |
-          "${pythonLocation}/bin/python" -m pip install -r backend/requirements.txt pyinstaller
+          PYTHONPATH= "${pythonLocation}/bin/python" -m pip install -r backend/requirements.txt pyinstaller
 
       - name: "macOS: build + smoke arm64 backend"
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          PYTHON="${pythonLocation}/bin/python" ./build-backend.sh
+          PYTHONPATH= PYTHON="${pythonLocation}/bin/python" ./build-backend.sh
           BIN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}"
           file "$BIN"
           file "$BIN" | grep -q arm64 || { echo "::error::backend is not arm64"; exit 1; }
@@ -138,13 +138,13 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          "${pythonLocation}/bin/python" -m pip install -r backend/requirements.txt pyinstaller
+          PYTHONPATH= "${pythonLocation}/bin/python" -m pip install -r backend/requirements.txt pyinstaller
 
       - name: "macOS: build + smoke x64 backend"
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          PYTHON="${pythonLocation}/bin/python" ./build-backend.sh
+          PYTHONPATH= PYTHON="${pythonLocation}/bin/python" ./build-backend.sh --target-arch x86_64
           BIN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}"
           file "$BIN"
           file "$BIN" | grep -q x86_64 || { echo "::error::backend is not x86_64"; exit 1; }

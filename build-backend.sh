@@ -27,6 +27,7 @@ fi
   --distpath dist \
   --workpath build \
   --specpath build \
+  "$@" \
   main.py
 
 if [ -x "dist/syncflow-backend/syncflow-backend" ]; then
