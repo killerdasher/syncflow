@@ -14,7 +14,7 @@
   <a href="https://github.com/killerdasher/syncflow/actions/workflows/ci.yml"><img src="https://github.com/killerdasher/syncflow/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/killerdasher/syncflow/releases"><img src="https://img.shields.io/github/v/release/killerdasher/syncflow" alt="Release"></a>
   <a href="https://github.com/killerdasher/syncflow/releases"><img src="https://img.shields.io/github/downloads/killerdasher/syncflow/total" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/tests-79%20green-brightgreen" alt="Tests: 79 checks">
+  <img src="https://img.shields.io/badge/tests-99%20green-brightgreen" alt="Tests: 99 checks">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-0ea5e9" alt="Platform: Windows | Linux | macOS">
   <a href="https://github.com/killerdasher/syncflow/attestations"><img src="https://img.shields.io/github/attestations/killerdasher/syncflow" alt="Build attestations"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
@@ -69,9 +69,11 @@ Unsigned builds: Windows shows a SmartScreen note (More info → Run anyway — 
 
 ## Security at a glance
 
-- **79 automated checks** run in CI on every push — including a dedicated **attack suite** (bind posture, garbage frames, field injection, permission checks) and a **crypto round-trip proof** (ECDH → AES-GCM, Ed25519, handshake, replay rejection) executed natively on **Ubuntu, Windows and macOS**.
+- **99 automated checks** run in CI on every push — including a dedicated **attack suite** (bind posture, garbage frames, field injection, permission checks) and a **crypto round-trip proof** (ECDH → AES-GCM, Ed25519, handshake, replay rejection) executed natively on **Ubuntu, Windows and macOS**.
 - **0 known vulnerabilities**: `npm audit` and `pip-audit` are clean; dependencies are pinned and Dependabot-monitored.
 - **Honest scope**: transfers use a direct LAN connection with application-layer E2E encryption — there is **no TLS layer** and no WAN relay in the UI.
+
+- **Opt-in LAN mode** (`SYNCFLOW_WS_HOST`): loopback by default; remote clients pair with a one-time code → bearer token (locked after 5 wrong tries) — Phase 0 of the mobile plan.
 
 **Latest audit (2026-10-03): [docs/security-audit.md](docs/security-audit.md)** — findings, attack journal, seals, residual risks.
 
@@ -101,7 +103,7 @@ SyncFlow/
 │   ├── networking/    # TCP server/client
 │   ├── crypto/        # E2E crypto (AES-GCM, Ed25519, X25519) + trust store
 │   ├── relay/         # Standalone relay module (not wired into the UI)
-│   └── tests/         # Security suite (run_all.sh, 79 checks)
+│   └── tests/         # Security suite (run_all.sh, 99 checks)
 ├── build/             # App icons
 └── docs/              # Setup, networking, signing, roadmap, mobile plan
 ```
@@ -165,7 +167,7 @@ opens a **draft** GitHub Release for review.
 ## Tests
 
 ```bash
-backend/tests/run_all.sh    # 79 checks against fresh live instances, ~5 min
+backend/tests/run_all.sh    # 99 checks against fresh live instances, ~5 min
 npx tsc --noEmit            # typecheck
 python backend/tests/smoke_windows.py   # portable backend smoke (any OS)
 ```

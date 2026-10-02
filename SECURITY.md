@@ -27,9 +27,17 @@ Please include: affected version/OS, reproduction steps, and impact.
 - Peers are trust-on-first-use: verify the device pairing out-of-band if you
   face an active MITM on your network.
 
+- **LAN mode (`SYNCFLOW_WS_HOST`) is opt-in.** The control plane binds
+  loopback-only by default. When enabled, remote clients must exchange a
+  single-use, 5-minute pairing code issued on the desktop for a bearer
+  token (5 wrong attempts = 5-minute lockout); unauthenticated sockets can
+  only run the pairing/auth handshake. Tokens are stored hashed in an
+  owner-only `pairing.json`. Phase 0 of the mobile plan — covered by the
+  `t_lan_auth` suite (20 checks).
+
 The latest audit — findings, attack journal, seals and residual risks — is in
 [docs/security-audit.md](docs/security-audit.md). The full threat model,
-hardening notes and 79-check security test evidence are in
+hardening notes and 99-check security test evidence are in
 [SECURITY_REPORT.md](SECURITY_REPORT.md).
 
 ## Supported Versions

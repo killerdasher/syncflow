@@ -9,7 +9,32 @@ router/Wi-Fi). No internet access is required or used.
 |------|----------|----------|---------|
 | `18974` | TCP | all interfaces | Transfers + chat (E2E encrypted) |
 | `5353` | UDP | mDNS multicast | Device discovery |
-| `18973` | TCP | `127.0.0.1` only | Local UI ↔ backend (never exposed) |
+| `18973` | TCP | `127.0.0.1` only (default) | Local UI ↔ backend |
+
+### LAN mode (opt-in, mobile companion)
+
+By default the control plane never leaves loopback — remote machines cannot
+connect at all. Phase 0 adds an **opt-in** LAN bind for the upcoming mobile
+companion:
+
+```bash
+SYNCFLOW_WS_HOST=0.0.0.0 ./start-dev.sh     # or export before launching the app
+```
+
+- The backend logs `WebSocket bridge listening on ws://0.0.0.0:18973` plus a
+  LAN-mode warning at startup.
+- **Remote clients must pair**: on the desktop send `{"type":"pairing:generate"}`
+  (loopback only) → an 8-character code valid for **5 min**, **single use**.
+  The client sends `{"type":"pairing","code":"..."}` first and receives a
+  **bearer token**; every later connection starts with
+  `{"type":"auth","token":"..."}`. Five wrong codes lock pairing for 5 min.
+- Unauthenticated remote sockets may only send `pairing`/`auth` — all other
+  messages get `{"type":"auth_required"}`.
+- Origins `capacitor://localhost`, `http://localhost`, `https://localhost`
+  are accepted for the companion webview (origin is not the auth mechanism).
+- State lives in `pairing.json` next to the chat log (owner-only `0600`).
+- Firewall: opening LAN mode does **not** change port 18973's role for the
+  desktop itself; the transfer plane (18974) works exactly as before.
 
 **Both devices must allow inbound TCP `18974` + UDP `5353`** — discovery and
 outbound-initiated connections can work while inbound is blocked, which shows

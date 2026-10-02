@@ -13,6 +13,7 @@ from discovery.mdns import MDNSDiscovery
 from transfer.engine import TransferEngine, TRANSFER_ID_RE, san
 from networking import TCPServer
 from ws_bridge import WebSocketBridge
+from pairing import PairingManager
 from crypto.e2e import DeviceIdentityKeys
 from crypto.blockchain import sha256_str
 
@@ -368,6 +369,11 @@ class SyncFlowBackend:
         print(f"Identity: {self.identity.signing_pub_b64[:32]}...", flush=True)
 
         self.ws_bridge = WebSocketBridge(port=self.ws_port)
+        # Phase 0: pairing codes/tokens for LAN mode live in the app home
+        # (owner-only, same directory as the chat log).
+        self.ws_bridge.set_pairing(
+            PairingManager(os.path.join(os.path.dirname(self._chat_path), "pairing.json"))
+        )
         self._register_handlers()
 
         self.transfer_engine.set_progress_callback(self._on_transfer_progress)
