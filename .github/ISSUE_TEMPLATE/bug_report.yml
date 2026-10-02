@@ -1,0 +1,52 @@
+name: Bug report
+description: Something is broken in SyncFlow
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Please search existing issues first.
+        **Security vulnerabilities: do not file here — use GitHub → Security → Report a vulnerability.**
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 10
+        - Windows 11
+        - Linux (Debian/Ubuntu/Mint)
+        - Linux (Fedora/openSUSE)
+        - Linux (Arch)
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Other Linux distro
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SyncFlow version
+      description: Found in Settings, or the release you downloaded
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Clear description, steps to reproduce, expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Drag files here or paste output (the app writes logs to its terminal / console)
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: Both devices are on the same LAN and the latest release
+        - label: I searched existing issues for duplicates

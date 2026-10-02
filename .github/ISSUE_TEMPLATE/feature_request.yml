@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest an improvement for SyncFlow
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do that SyncFlow can't (or does badly)?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed solution
+      description: How should it work?
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope sanity-check
+      options:
+        - label: I understand SyncFlow is LAN-only (no cloud/WAN relay) and my idea fits that model
+        - label: I searched existing issues/roadmap for similar requests
