@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Cross-device file sync application",
   "main": "./out/main/index.js",
+  "desktopName": "syncflow.desktop",
   "author": "SyncFlow contributors",
   "homepage": "https://github.com/killerdasher/syncflow#readme",
   "license": "MIT",
@@ -62,7 +63,8 @@
       ],
       "category": "Utility",
       "maintainer": "SyncFlow contributors",
-      "synopsis": "Cross-device E2E file sync and chat"
+      "synopsis": "Cross-device E2E file sync and chat",
+      "syncDesktopName": true
     },
     "win": {
       "target": [
@@ -75,6 +77,11 @@
         "dmg"
       ],
       "category": "public.app-category.utilities"
+    },
+    "nsis": {
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SyncFlow"
     }
   },
   "allowScripts": {

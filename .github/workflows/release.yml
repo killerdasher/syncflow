@@ -185,6 +185,12 @@ jobs:
           path: release-files
           merge-multiple: true
 
+      - name: Add AppImage shortcut installer + icon
+        run: |
+          cp scripts/install-appimage.sh release-files/
+          cp build/icon.png release-files/syncflow-icon.png
+          chmod +x release-files/install-appimage.sh
+
       - name: Tidy release files (drop update metadata)
         run: |
           cd release-files
