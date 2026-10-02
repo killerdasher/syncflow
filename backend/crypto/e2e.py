@@ -30,7 +30,19 @@ class DeviceIdentityKeys:
 
     def __init__(self, storage_dir: Optional[str] = None):
         self.storage_dir = storage_dir or os.path.expanduser("~/.syncflow/identity")
-        os.makedirs(self.storage_dir, exist_ok=True)
+        os.makedirs(self.storage_dir, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(self.storage_dir, 0o700)  # tighten dirs made by older builds
+        except OSError:
+            pass
+        # The app home (parent of .../identity) holds chat log + peer trust:
+        # owner-only too. Guard: never chmod a filesystem root.
+        _home = os.path.dirname(os.path.abspath(self.storage_dir))
+        if os.path.basename(self.storage_dir) == "identity" and _home != os.path.dirname(_home):
+            try:
+                os.chmod(_home, 0o700)
+            except OSError:
+                pass
 
         sign_path = os.path.join(self.storage_dir, "signing.key")
         x25519_path = os.path.join(self.storage_dir, "x25519.key")
@@ -60,6 +72,13 @@ class DeviceIdentityKeys:
                     serialization.NoEncryption(),
                 ))
             os.chmod(x25519_path, 0o600)
+
+        # Private keys must stay owner-only regardless of how they were created
+        for _p in (sign_path, x25519_path):
+            try:
+                os.chmod(_p, 0o600)
+            except OSError:
+                pass
 
         self.signing_pubkey = self.signing_key.public_key()
         self.x25519_pubkey = self.x25519_key.public_key()
@@ -258,7 +277,7 @@ class PeerTrustStore:
 
     def _save(self):
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            os.makedirs(os.path.dirname(self.path), exist_ok=True, mode=0o700)
             with open(self.path, "w") as f:
                 json.dump({"peers": self._peers}, f, indent=2)
             os.chmod(self.path, 0o600)

@@ -2,7 +2,7 @@
 # SyncFlow security suite - one-command runner.
 #
 # Starts two fresh backend instances (A: TCP 19974 / WS 18993,
-# B: TCP 19975 / WS 18995), runs all six suites against them, prints a
+# B: TCP 19975 / WS 18995), runs all seven suites against them, prints a
 # PASS/FAIL summary and tears everything down. Exit code 0 = all green.
 #
 # Usage:  ./run_all.sh
@@ -90,6 +90,7 @@ run_suite mitm2        "$HERE/mitm2.py"
 run_suite t_ws         "$HERE/t_ws.py"
 run_suite t_mdns_rogue "$HERE/t_mdns_rogue.py"
 run_suite t_extra      "$HERE/t_extra.py"
+run_suite t_attacks   "$HERE/t_attacks.py"
 
 echo ""
 echo "======================================"

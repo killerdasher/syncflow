@@ -58,9 +58,13 @@ class SyncFlowBackend:
 
     def _save_chat_log(self):
         try:
-            os.makedirs(os.path.dirname(self._chat_path), exist_ok=True)
-            with open(self._chat_path, "w") as f:
+            os.makedirs(os.path.dirname(self._chat_path), exist_ok=True, mode=0o700)
+            # Chat history is sensitive: owner-only (0600), even for files
+            # created by older builds with the looser default umask.
+            fd = os.open(self._chat_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
                 json.dump(self._message_log[-500:], f)
+            os.chmod(self._chat_path, 0o600)
         except Exception:
             pass
 
