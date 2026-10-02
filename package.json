@@ -4,7 +4,7 @@
   "description": "Cross-device file sync application",
   "main": "./out/main/index.js",
   "author": "SyncFlow contributors",
-  "homepage": "https://github.com/syncflow-app/syncflow#readme",
+  "homepage": "https://github.com/killerdasher/syncflow#readme",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",

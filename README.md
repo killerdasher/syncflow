@@ -1,5 +1,9 @@
 # SyncFlow
 
+[![CI](https://github.com/killerdasher/syncflow/actions/workflows/ci.yml/badge.svg)](https://github.com/killerdasher/syncflow/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/killerdasher/syncflow)](https://github.com/killerdasher/syncflow/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Peer-to-peer **file transfer, sync folders and chat** for your local network —
 with real end-to-end encryption and no cloud, no accounts, no telemetry.
 
@@ -23,7 +27,7 @@ Grab the latest build for your OS from the **[Releases](../../releases)** page:
 | **macOS** | `SyncFlow-x.y.z.dmg` (Intel) · `SyncFlow-x.y.z-arm64.dmg` (Apple Silicon) |
 
 All releases include `SHA256SUMS.txt` and GitHub build-provenance
-attestations (`gh attestation verify <file> --repo <owner>/syncflow`).
+attestations (`gh attestation verify <file> --repo killerdasher/syncflow`).
 Unsigned builds: Windows shows a SmartScreen note (More info → Run anyway) —
 see [docs/code-signing.md](docs/code-signing.md); macOS first-run steps in
 [docs/macos.md](docs/macos.md).
