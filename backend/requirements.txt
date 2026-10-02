@@ -4,5 +4,5 @@ aiofiles>=23.0
 watchdog>=4.0
 cryptography>=42.0
 psutil>=5.9
-qrcode>=7.4
+qrcode>=8.2
 aiohttp>=3.9
