@@ -3,11 +3,8 @@
   "version": "1.0.0",
   "description": "Cross-device file sync application",
   "main": "./out/main/index.js",
-  "author": {
-    "name": "SyncFlow",
-    "email": "dasher@localhost"
-  },
-  "homepage": "file:///home/dasher/Desktop/my app/syncflow/README.md",
+  "author": "SyncFlow contributors",
+  "homepage": "https://github.com/syncflow-app/syncflow#readme",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
@@ -79,7 +76,7 @@
         "deb"
       ],
       "category": "Utility",
-      "maintainer": "SyncFlow <dasher@localhost>",
+      "maintainer": "SyncFlow contributors",
       "synopsis": "Cross-device E2E file sync and chat"
     },
     "win": {
