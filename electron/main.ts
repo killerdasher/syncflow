@@ -285,6 +285,7 @@ ipcMain.on('window:maximize', () => {
   }
 })
 ipcMain.on('window:close', () => mainWindow?.close())
+ipcMain.on('backend:status:request', () => sendBackendStatus())
 ipcMain.on('window:focus', () => {
   mainWindow?.show()
   mainWindow?.focus()

@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeStatusListener: () => {
     ipcRenderer.removeAllListeners('backend:status')
   },
+  requestStatus: () => ipcRenderer.send('backend:status:request'),
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),

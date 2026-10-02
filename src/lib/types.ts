@@ -88,6 +88,7 @@ declare global {
       removeMessageListener: () => void
       onStatus: (callback: (status: { connected: boolean }) => void) => void
       removeStatusListener: () => void
+      requestStatus: () => void
       window: {
         minimize: () => void
         maximize: () => void

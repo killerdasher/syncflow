@@ -193,6 +193,8 @@ export function useWebSocket() {
       useAppStore.getState().setBackendConnected(status.connected)
     }
     window.electronAPI.onStatus(handleStatus)
+    // Re-request: did-finish-load may have pushed status before this listener attached
+    window.electronAPI.requestStatus()
 
     window.electronAPI.send({ type: 'identity:get' })
     window.electronAPI.send({ type: 'devices:list' })

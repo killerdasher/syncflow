@@ -17,11 +17,13 @@ const tabs = [
 
 function timeAgo(ts?: number): string {
   if (!ts) return '—'
-  const d = Date.now() - ts
+  // Backend stores epoch seconds (time.time()); tolerate ms as well
+  const t = ts < 1e12 ? ts * 1000 : ts
+  const d = Date.now() - t
   if (d < 60_000) return 'just now'
   if (d < 3_600_000) return `${Math.floor(d / 60_000)}m ago`
   if (d < 86_400_000) return `${Math.floor(d / 3_600_000)}h ago`
-  return new Date(ts).toLocaleDateString()
+  return new Date(t).toLocaleDateString()
 }
 
 export function SettingsPage() {
