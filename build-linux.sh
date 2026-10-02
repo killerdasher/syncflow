@@ -15,6 +15,9 @@ else
   exit 1
 fi
 
+echo "Building Python backend binary (PyInstaller)..."
+./build-backend.sh
+
 echo "Building SyncFlow for production..."
 npx electron-vite build
 

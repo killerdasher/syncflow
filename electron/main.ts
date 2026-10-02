@@ -30,6 +30,11 @@ function getPythonExecutable(): string {
   const exeName = isWin ? 'python.exe' : 'python3'
 
   if (app.isPackaged) {
+    // Preferred: self-contained native backend built by build-backend.sh (PyInstaller)
+    const frozenName = isWin ? 'syncflow-backend.exe' : 'syncflow-backend'
+    const frozenPath = join(process.resourcesPath, 'backend-bin', frozenName)
+    if (fs.existsSync(frozenPath)) return frozenPath
+    // Legacy: venv bundled next to backend source (pre-1.0 layouts)
     const packagedPath = join(process.resourcesPath, 'backend', 'venv', isWin ? 'Scripts' : 'bin', exeName)
     if (fs.existsSync(packagedPath)) return packagedPath
     return exeName
@@ -42,18 +47,26 @@ function getPythonExecutable(): string {
 
 function startPythonBackend(): Promise<number> {
   return new Promise((resolve, reject) => {
-    const scriptPath = getPythonScriptPath()
+    const exe = getPythonExecutable()
+    const isFrozen = /syncflow-backend(\.exe)?$/.test(exe)
+    const args: string[] = []
+    let cwd: string
 
-    if (!fs.existsSync(scriptPath)) {
-      console.error('Python backend not found at:', scriptPath)
-      reject(new Error('Python backend not found'))
-      return
+    if (isFrozen) {
+      cwd = join(exe, '..')
+    } else {
+      const scriptPath = getPythonScriptPath()
+      if (!fs.existsSync(scriptPath)) {
+        console.error('Python backend not found at:', scriptPath)
+        reject(new Error('Python backend not found'))
+        return
+      }
+      args.push(scriptPath)
+      cwd = join(scriptPath, '..')
     }
 
-    const backendDir = join(scriptPath, '..')
-
-    pythonProcess = spawn(getPythonExecutable(), [scriptPath], {
-      cwd: backendDir,
+    pythonProcess = spawn(exe, args, {
+      cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
     })

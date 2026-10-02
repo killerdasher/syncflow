@@ -5,9 +5,9 @@ on:
   pull_request:
 
 jobs:
-  test:
+  test-linux:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -20,7 +20,7 @@ jobs:
           node-version: '20'
 
       - name: Install backend dependencies
-        run: pip install -r backend/requirements.txt
+        run: pip install -r backend/requirements.txt pyinstaller
 
       - name: Install frontend dependencies
         run: npm ci
@@ -33,3 +33,55 @@ jobs:
 
       - name: Security suite (63 checks, fresh live instances)
         run: backend/tests/run_all.sh
+
+      - name: Build frozen backend (PyInstaller)
+        run: ./build-backend.sh
+
+      - name: Frozen backend smoke
+        run: SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/syncflow-backend" python backend/tests/smoke_windows.py
+
+  smoke-windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt pyinstaller
+
+      - name: Source backend smoke (start + WS round-trip)
+        run: python backend/tests/smoke_windows.py
+
+      - name: Build frozen backend (PyInstaller)
+        shell: bash
+        run: PYTHON=python ./build-backend.sh
+
+      - name: Frozen backend smoke
+        shell: bash
+        run: SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/syncflow-backend.exe" python backend/tests/smoke_windows.py
+
+  smoke-macos:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt pyinstaller
+
+      - name: Source backend smoke (start + WS round-trip)
+        run: python backend/tests/smoke_windows.py
+
+      - name: Build frozen backend (PyInstaller)
+        run: PYTHON=python ./build-backend.sh
+
+      - name: Frozen backend smoke
+        run: SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/syncflow-backend" python backend/tests/smoke_windows.py
