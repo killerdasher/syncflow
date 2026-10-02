@@ -22,6 +22,9 @@ jobs:
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt pyinstaller
 
+      - name: Crypto round-trip proof (E2E primitives on this OS)
+        run: python backend/tests/t_crypto.py
+
       - name: Install frontend dependencies
         run: |
           npm ci
@@ -58,6 +61,9 @@ jobs:
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt pyinstaller
 
+      - name: Crypto round-trip proof (E2E primitives on this OS)
+        run: python backend/tests/t_crypto.py
+
       - name: Source backend smoke (start + WS round-trip)
         run: python backend/tests/smoke_windows.py
 
@@ -81,6 +87,9 @@ jobs:
 
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt pyinstaller
+
+      - name: Crypto round-trip proof (E2E primitives on this OS)
+        run: python backend/tests/t_crypto.py
 
       - name: Source backend smoke (start + WS round-trip)
         run: python backend/tests/smoke_windows.py
