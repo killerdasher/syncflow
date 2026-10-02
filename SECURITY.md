@@ -27,8 +27,10 @@ Please include: affected version/OS, reproduction steps, and impact.
 - Peers are trust-on-first-use: verify the device pairing out-of-band if you
   face an active MITM on your network.
 
-The full threat model, hardening notes and the 63-check security test evidence
-are in [SECURITY_REPORT.md](SECURITY_REPORT.md).
+The latest audit — findings, attack journal, seals and residual risks — is in
+[docs/security-audit.md](docs/security-audit.md). The full threat model,
+hardening notes and 79-check security test evidence are in
+[SECURITY_REPORT.md](SECURITY_REPORT.md).
 
 ## Supported Versions
 

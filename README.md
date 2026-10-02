@@ -73,6 +73,8 @@ Unsigned builds: Windows shows a SmartScreen note (More info → Run anyway — 
 - **0 known vulnerabilities**: `npm audit` and `pip-audit` are clean; dependencies are pinned and Dependabot-monitored.
 - **Honest scope**: transfers use a direct LAN connection with application-layer E2E encryption — there is **no TLS layer** and no WAN relay in the UI.
 
+**Latest audit (2026-10-03): [docs/security-audit.md](docs/security-audit.md)** — findings, attack journal, seals, residual risks.
+
 Full threat model and test evidence: **[SECURITY_REPORT.md](SECURITY_REPORT.md)** · vulnerability reporting: [SECURITY.md](SECURITY.md).
 
 ## How it works
