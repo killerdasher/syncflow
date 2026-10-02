@@ -97,6 +97,8 @@ declare global {
       }
       openFiles: () => Promise<FileItem[]>
       openDirectory: () => Promise<string | null>
+      onTraySendFiles?: (callback: () => void) => void
+      removeTraySendFilesListener?: () => void
       getFilePath: (file: File) => string
       getPath: (name: string) => Promise<string>
       shell: {

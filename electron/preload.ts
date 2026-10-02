@@ -23,6 +23,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   openFiles: () => ipcRenderer.invoke('dialog:openFiles'),
   openDirectory: () => ipcRenderer.invoke('dialog:openDirectory'),
+  onTraySendFiles: (callback: () => void) => {
+    ipcRenderer.on('tray:send-files', () => callback())
+  },
+  removeTraySendFilesListener: () => {
+    ipcRenderer.removeAllListeners('tray:send-files')
+  },
   getFilePath: (file: File) => webUtils.getPathForFile(file),
   getPath: (name: string) => ipcRenderer.invoke('app:getPath', name),
   shell: {

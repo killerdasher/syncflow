@@ -32,6 +32,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [addDeviceOpen, setAddDeviceOpen] = useState(false)
   const [pickerFiles, setPickerFiles] = useState<FileItem[] | null>(null)
+  const [windowDragOver, setWindowDragOver] = useState(false)
   const addTransfer = useTransferStore((s) => s.addTransfer)
   const devices = useDeviceStore((s) => s.devices)
   const deviceName = useSettingsStore((s) => s.settings.deviceName)
@@ -175,6 +176,48 @@ function App() {
     [routeFiles]
   )
 
+  // Tray menu "Send files" (main process event) -> same flow as the button.
+  useEffect(() => {
+    const api = window.electronAPI
+    api?.onTraySendFiles?.(() => {
+      void handleQuickSend()
+    })
+    return () => api?.removeTraySendFilesListener?.()
+  }, [handleQuickSend])
+
+  // Window-wide drag & drop: files dropped anywhere outside the send panel's
+  // own drop zone route straight into the send flow. The zone's React handlers
+  // stopPropagation on drag events (its own highlight wins there), while this
+  // capture-phase drop listener wins over zone drops so nothing double-sends.
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types || []).includes('Files')
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      setWindowDragOver(true)
+    }
+    const onDragLeave = (e: DragEvent) => {
+      if (!e.relatedTarget) setWindowDragOver(false)
+    }
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      e.stopPropagation()
+      setWindowDragOver(false)
+      const files = Array.from(e.dataTransfer?.files || [])
+      if (files.length > 0) void handleFilesSelected(files)
+    }
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('drop', onDrop, true)
+    return () => {
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('drop', onDrop, true)
+    }
+  }, [handleFilesSelected])
+
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
@@ -289,6 +332,16 @@ function App() {
         }}
         onAddDevice={() => setAddDeviceOpen(true)}
       />
+      {windowDragOver && (
+        <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-black/40">
+          <div className="border-2 border-dashed border-cyber-teal rounded-3xl px-14 py-10 text-center bg-navy-900/90 shadow-2xl">
+            <p className="text-lg font-semibold text-frost-100">Drop files to send</p>
+            <p className="text-sm text-frost-300 mt-1">
+              Releases anywhere in this window
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

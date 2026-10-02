@@ -155,7 +155,13 @@ jobs:
         env:
           # Never search for signing identities — all release artifacts are unsigned
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac dmg --${{ matrix.mac_arch }} --publish never
+        run: |
+          npx electron-builder --mac --${{ matrix.mac_arch }} --publish never
+          # Two mac jobs (x64/arm64) both emit latest-mac.yml — arch-suffix
+          # each so the release job can merge them instead of clobbering.
+          test -f dist/latest-mac.yml
+          cp dist/latest-mac.yml dist/latest-mac-${{ matrix.mac_arch }}.yml
+          rm dist/latest-mac.yml
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -167,6 +173,9 @@ jobs:
             dist/*.rpm
             dist/*.exe
             dist/*.dmg
+            dist/*.zip
+            dist/latest*.yml
+            dist/*.blockmap
           if-no-files-found: error
           retention-days: 14
 
@@ -191,13 +200,39 @@ jobs:
           cp build/icon.png release-files/syncflow-icon.png
           chmod +x release-files/install-appimage.sh
 
-      - name: Tidy release files (drop update metadata)
+      - name: Merge macOS update feeds (x64 + arm64)
+        run: |
+          python3 - <<'PY'
+          import glob, os, sys
+          try:
+              import yaml
+          except ImportError:
+              import subprocess; subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyyaml"])
+              import yaml
+          feeds = sorted(glob.glob("release-files/latest-mac-*.yml"))
+          if len(feeds) != 2:
+              sys.exit(f"expected 2 arch feeds, found: {feeds}")
+          merged = yaml.safe_load(open(feeds[0]))
+          entries = []
+          for f in feeds:
+              d = yaml.safe_load(open(f))
+              entries.extend(d.get("files", []))
+              merged["version"] = d["version"]
+          merged["files"] = entries
+          with open("release-files/latest-mac.yml", "w") as out:
+              yaml.safe_dump(merged, out, sort_keys=False)
+          for f in feeds:
+              os.remove(f)
+          print(f"merged {len(entries)} mac artifacts into latest-mac.yml")
+          PY
+
+      - name: Verify auto-update feed present (latest*.yml + blockmaps)
         run: |
           cd release-files
-          find . -name '*.blockmap' -delete
-          find . -name 'latest*.yml' -delete
-          find . -name '*.yml' -delete
           ls -la
+          n=$(ls latest*.yml 2>/dev/null | wc -l)
+          echo "update feed files: $n (latest.yml + latest-linux.yml + latest-mac.yml)"
+          test "$n" -ge 3
 
       - name: Generate SHA256SUMS.txt
         run: |

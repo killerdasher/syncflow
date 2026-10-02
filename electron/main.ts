@@ -3,6 +3,7 @@ import { join } from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { WebSocket } from 'ws'
 import fs from 'fs'
+import { autoUpdater } from 'electron-updater'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -215,6 +216,14 @@ function createTray(): void {
       click: () => mainWindow?.show(),
     },
     {
+      label: 'Send files',
+      click: () => {
+        mainWindow?.show()
+        mainWindow?.focus()
+        mainWindow?.webContents.send('tray:send-files')
+      },
+    },
+    {
       label: 'Quit',
       click: () => {
         if (pythonProcess && !pythonProcess.killed) {
@@ -235,6 +244,60 @@ function createTray(): void {
       }
     }
   })
+}
+
+// Auto-update: silent background check (startup + every 6h) against the
+// GitHub releases feed; downloads in background, asks once to restart.
+// Dev runs are untouched (no app-update.yml outside packaged builds).
+function setupAutoUpdater(): void {
+  if (!app.isPackaged) return
+  autoUpdater.autoDownload = true
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[Updater] checking for updates')
+  })
+  autoUpdater.on('update-not-available', () => {
+    console.log('[Updater] already up to date')
+  })
+  autoUpdater.on('update-available', () => {
+    console.log('[Updater] update available — downloading in background')
+  })
+  autoUpdater.on('update-downloaded', (event) => {
+    const notes = typeof event.releaseNotes === 'string' ? event.releaseNotes : ''
+    const opts = {
+      type: 'info' as const,
+      title: 'Update ready',
+      message: `Version ${event.version} is ready to install.`,
+      detail:
+        notes.trim()
+          ? notes.slice(0, 500)
+          : 'Restart now to switch to the new version, or keep working and update later.',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+    }
+    const done = (r: { response: number }): void => {
+      if (r.response === 0) {
+        isQuitting = true
+        if (pythonProcess && !pythonProcess.killed) pythonProcess.kill()
+        app.quit()
+      }
+    }
+    if (mainWindow) {
+      void dialog.showMessageBox(mainWindow, opts).then(done)
+    } else {
+      void dialog.showMessageBox(opts).then(done)
+    }
+  })
+  autoUpdater.on('error', (err) => {
+    console.log('[Updater]', (err as Error).message)
+  })
+  const check = (): void => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.log('[Updater] check failed:', (err as Error).message)
+    })
+  }
+  setTimeout(check, 15_000)
+  setInterval(check, 6 * 60 * 60 * 1000)
 }
 
 app.on('before-quit', () => {
@@ -262,11 +325,17 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+  console.log('[Boot] window created')
   createTray()
+  console.log('[Boot] tray created')
+  setupAutoUpdater()
+  console.log('[Boot] updater armed')
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}).catch((err) => {
+  console.error('[Boot] whenReady failed:', err)
 })
 
 app.on('window-all-closed', () => {
