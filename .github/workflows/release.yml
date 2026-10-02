@@ -77,7 +77,7 @@ jobs:
       - name: Build frozen backend (PyInstaller)
         if: runner.os != 'macOS'
         shell: bash
-        run: PYTHON=python ./build-backend.sh
+        run: ./build-backend.sh
 
       - name: Frozen backend smoke
         if: runner.os != 'macOS'
@@ -105,14 +105,20 @@ jobs:
       - name: "macOS: backend deps (Apple Silicon pass)"
         if: runner.os == 'macOS'
         shell: bash
-        run: pip install -r backend/requirements.txt pyinstaller
+        # Bare pip/python3 on this image resolve to the arm64 framework Python —
+        # always address the setup-python interpreter explicitly instead
+        run: |
+          "${pythonLocation}/bin/python" -m pip install -r backend/requirements.txt pyinstaller
 
       - name: "macOS: build + smoke arm64 backend"
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          PYTHON=python ./build-backend.sh
-          SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}" python backend/tests/smoke_windows.py
+          PYTHON="${pythonLocation}/bin/python" ./build-backend.sh
+          BIN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}"
+          file "$BIN"
+          file "$BIN" | grep -q arm64 || { echo "::error::backend is not arm64"; exit 1; }
+          SYNCFLOW_SMOKE_FROZEN="$BIN" "${pythonLocation}/bin/python" backend/tests/smoke_windows.py
 
       - name: "macOS: build Apple Silicon dmg"
         if: runner.os == 'macOS'
@@ -131,14 +137,18 @@ jobs:
       - name: "macOS: backend deps (Intel pass)"
         if: runner.os == 'macOS'
         shell: bash
-        run: pip install -r backend/requirements.txt pyinstaller
+        run: |
+          "${pythonLocation}/bin/python" -m pip install -r backend/requirements.txt pyinstaller
 
       - name: "macOS: build + smoke x64 backend"
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          PYTHON=python ./build-backend.sh
-          SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}" python backend/tests/smoke_windows.py
+          PYTHON="${pythonLocation}/bin/python" ./build-backend.sh
+          BIN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}"
+          file "$BIN"
+          file "$BIN" | grep -q x86_64 || { echo "::error::backend is not x86_64"; exit 1; }
+          SYNCFLOW_SMOKE_FROZEN="$BIN" "${pythonLocation}/bin/python" backend/tests/smoke_windows.py
 
       - name: "macOS: build Intel dmg"
         if: runner.os == 'macOS'

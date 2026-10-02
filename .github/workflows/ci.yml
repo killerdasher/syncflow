@@ -58,7 +58,7 @@ jobs:
 
       - name: Build frozen backend (PyInstaller)
         shell: bash
-        run: PYTHON=python ./build-backend.sh
+        run: ./build-backend.sh
 
       - name: Frozen backend smoke
         shell: bash
@@ -81,7 +81,7 @@ jobs:
         run: python backend/tests/smoke_windows.py
 
       - name: Build frozen backend (PyInstaller)
-        run: PYTHON=python ./build-backend.sh
+        run: ./build-backend.sh
 
       - name: Frozen backend smoke
         run: SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/syncflow-backend" python backend/tests/smoke_windows.py
