@@ -32,7 +32,7 @@ jobs:
             builder_args: -w
           - os: macos-latest
             backend_bin: syncflow-backend
-            builder_args: --mac dmg --arch x64 arm64
+            # no builder_args: macOS builds both archs in dedicated steps below
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -57,6 +57,7 @@ jobs:
           fi
 
       - name: Install backend dependencies
+        if: runner.os != 'macOS'
         shell: bash
         run: pip install -r backend/requirements.txt pyinstaller
 
@@ -74,10 +75,12 @@ jobs:
         run: npx electron-vite build
 
       - name: Build frozen backend (PyInstaller)
+        if: runner.os != 'macOS'
         shell: bash
         run: PYTHON=python ./build-backend.sh
 
       - name: Frozen backend smoke
+        if: runner.os != 'macOS'
         shell: bash
         run: SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}" python backend/tests/smoke_windows.py
 
@@ -85,12 +88,68 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y rpm
 
-      - name: Build installers
+      - name: Build installers (Windows/Linux)
+        if: runner.os != 'macOS'
         shell: bash
         env:
           # Never search for signing identities — all release artifacts are unsigned
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder ${{ matrix.builder_args }}
+        # --publish never: we attach files to the release ourselves later;
+        # electron-builder must not try to upload (needs a separate GH_TOKEN)
+        run: npx electron-builder ${{ matrix.builder_args }} --publish never
+
+      # macOS needs TWO passes: the runner is arm64, so the backend built with
+      # the default Python only runs on Apple Silicon. Pass 1 builds the arm64
+      # backend + dmg, then we switch to x64 Python (Rosetta) and rebuild both
+      # so the Intel dmg contains a native Intel backend.
+      - name: "macOS: backend deps (Apple Silicon pass)"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: pip install -r backend/requirements.txt pyinstaller
+
+      - name: "macOS: build + smoke arm64 backend"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          PYTHON=python ./build-backend.sh
+          SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}" python backend/tests/smoke_windows.py
+
+      - name: "macOS: build Apple Silicon dmg"
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac dmg --arm64 --publish never
+
+      - name: "macOS: switch to Intel (x64) Python"
+        if: runner.os == 'macOS'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: x64
+
+      - name: "macOS: backend deps (Intel pass)"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: pip install -r backend/requirements.txt pyinstaller
+
+      - name: "macOS: build + smoke x64 backend"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          PYTHON=python ./build-backend.sh
+          SYNCFLOW_SMOKE_FROZEN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}" python backend/tests/smoke_windows.py
+
+      - name: "macOS: build Intel dmg"
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        # Drop the arm64 unpacked dir so electron-builder repackages the
+        # x64 electron + the freshly built Intel backend (keeps the dmg from pass 1)
+        run: |
+          rm -rf dist/mac*
+          npx electron-builder --mac dmg --x64 --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
