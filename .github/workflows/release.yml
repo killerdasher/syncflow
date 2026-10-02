@@ -36,7 +36,7 @@ jobs:
             backend_bin: syncflow-backend
             mac_arch: arm64
             backend_arch: arm64
-          - os: macos-13            # Intel (native x86_64 runner)
+          - os: macos-15-intel      # Intel (native x86_64 runner; macos-13 is retired)
             backend_bin: syncflow-backend
             mac_arch: x64
             backend_arch: x86_64
