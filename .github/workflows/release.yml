@@ -112,7 +112,14 @@ jobs:
         run: |
           PY="${pythonLocation}/bin/python"
           "$PY" -c "import sys,os; print('diag exe:',sys.executable); print('diag prefix:',sys.prefix); print('diag PYTHONHOME:',repr(os.environ.get('PYTHONHOME'))); print('diag sys.path[:4]:',sys.path[:4])"
+          # The image's framework cryptography has no vendored OpenSSL: the frozen
+          # app then dies with "Symbol not found: _SSL_get0_group_name". Force a
+          # fresh self-contained PyPI wheel into user site (user site beats system
+          # site-packages on import), then fail fast if the exact import the frozen
+          # backend does at startup doesn't work here.
+          env -u PYTHONHOME PYTHONPATH= "$PY" -m pip install --user --force-reinstall --only-binary :all: cryptography
           env -u PYTHONHOME PYTHONPATH= "$PY" -m pip install -r backend/requirements.txt pyinstaller
+          env -u PYTHONHOME PYTHONPATH= "$PY" -c "import cryptography, cryptography.hazmat.primitives.asymmetric.x25519; print('cryptography OK:', cryptography.__version__, 'at', cryptography.__file__)"
 
       - name: "macOS: build + smoke backend"
         if: runner.os == 'macOS'
