@@ -1,81 +1,90 @@
 # SyncFlow
 
-Cross-device file sync application with a navy blue/aqua theme and animated UI.
+Peer-to-peer **file transfer, sync folders and chat** for your local network —
+with real end-to-end encryption and no cloud, no accounts, no telemetry.
 
-## Requirements
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="SyncFlow dashboard — send files and LAN devices" width="49%">
+  <img src="docs/screenshots/chat.png" alt="End-to-end encrypted chat" width="49%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/transfers.png" alt="Transfer history with chain verification" width="49%">
+  <img src="docs/screenshots/settings.png" alt="Security settings and pinned devices" width="49%">
+</p>
 
-- **Node.js** 20+
-- **Python** 3.11+
+## Download
 
-## Quick Start (Linux / Parrot OS)
+Grab the latest build for your OS from the **[Releases](../../releases)** page:
 
+| OS | Artifact |
+|----|----------|
+| **Linux** | `SyncFlow-x.y.z.AppImage` (nearly all distros) · `.deb` (Debian/Ubuntu/Mint) · `.rpm` (Fedora/openSUSE) |
+| **Windows 10/11** | `SyncFlow Setup x.y.z.exe` (installer) · `SyncFlow-x.y.z.exe` (portable) |
+| **macOS** | `SyncFlow-x.y.z.dmg` (Intel) · `SyncFlow-x.y.z-arm64.dmg` (Apple Silicon) |
+
+All releases include `SHA256SUMS.txt` and GitHub build-provenance
+attestations (`gh attestation verify <file> --repo <owner>/syncflow`).
+Unsigned builds: Windows shows a SmartScreen note (More info → Run anyway) —
+see [docs/code-signing.md](docs/code-signing.md); macOS first-run steps in
+[docs/macos.md](docs/macos.md).
+
+## Quick Start (from source)
+
+**Linux / macOS**
 ```bash
-cd syncflow
 ./start-dev.sh
 ```
+**Windows** — double-click `start-windows.bat`
 
-## Quick Start (Windows)
+First-time setup, per OS: see [README Development Setup](#development-setup)
+below. Portable Windows folder (no install): [docs/windows-setup.md](docs/windows-setup.md).
 
-Double-click `start-windows.bat`
+## Development Setup
 
-Or manually:
-```cmd
-cd syncflow
-start-windows.bat
-```
+Requirements: **Node 20+**, **Python 3.11+**.
 
-## First-Time Setup
-
-### Linux
 ```bash
-cd syncflow/backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cd ..
+git clone <repo-url> && cd syncflow
+
+# Backend
+cd backend && python3 -m venv venv && source venv/bin/activate \
+  && pip install -r requirements.txt && cd ..    # Windows: venv\Scripts\activate
+
 npm install
+./start-dev.sh                                   # Windows: start-windows.bat
 ```
-
-### Windows
-```cmd
-cd syncflow\backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-cd ..
-npm install
-```
-
-## Build for Distribution
-
-### Linux
-```bash
-./build-linux.sh
-```
-Output: `dist/` folder (AppImage + deb)
-
-### Windows
-```cmd
-build-windows.bat
-```
-Output: `dist\` folder (EXE installer + portable)
 
 ## Two-Device LAN Test
 
 1. Connect both machines to the **same network** (same router/Wi-Fi).
-2. Start SyncFlow on both: `./start-dev.sh` (or install the AppImage/deb on the second machine).
-3. Wait ~5s — each dashboard should show the other under **Devices** (mDNS discovery).
-   - Not discovered? Use **Add Device** → enter the peer's name + LAN IP (find it with `hostname -I`).
-4. Click **Send Files** on machine A → pick files → send.
-5. On machine B an amber **approval card** appears — click **✓ Accept** (or ✗ Decline).
-   - Skip prompts permanently: Settings → enable **Auto-accept transfers** → Save.
-6. Verify: transferred file lands in `~/Downloads/SyncFlow/`, card shows **Chain verified**.
-7. Chat tab: messages relay between both, each with a hash badge.
+2. Start SyncFlow on both (source build, AppImage, installer — any).
+3. Wait ~5s — each dashboard shows the other under **Devices** (mDNS discovery).
+   - Not discovered? **Add Device** → enter the peer's LAN IP (`hostname -I`).
+4. **Send Files** on machine A → pick files → send.
+5. Machine B gets an amber **approval card** — **✓ Accept** (or enable
+   **Auto-accept transfers** in Settings to skip prompts permanently).
+6. File lands in `~/Downloads/SyncFlow/` (Windows: `Downloads\SyncFlow\`),
+   card shows **Chain verified**.
+7. **Chat** tab: messages relay between both devices with hash badges.
 
-**Ports needed** (allow in firewall): TCP `18974` (transfers), UDP `5353` (mDNS discovery).
-WS `18973` is localhost-only. Packaged builds require `python3` on PATH (3.13 recommended).
+**Firewall:** TCP `18974` + UDP `5353` must be reachable **inbound on both
+devices** — one-way-only chat/files almost always means a firewall block.
+Per-OS rules: **[docs/networking.md](docs/networking.md)**.
 
-**Expected first-run state:** "0 of 0 connected / No devices discovered yet" is normal until a peer is online.
+**Expected first-run state:** "0 of 0 connected / No devices discovered yet"
+is normal until a peer is online.
+
+## Build for Distribution
+
+```bash
+./build-backend.sh     # Python backend → self-contained binary (PyInstaller)
+./build-linux.sh       # Linux: AppImage + deb          (also builds backend)
+build-windows.bat      # Windows: NSIS installer + portable
+```
+
+Releases are built automatically by CI: push a tag `vX.Y.Z` (matching
+`package.json`) and the **Release** workflow produces all OS artifacts, then
+opens a **draft** GitHub Release for review.
 
 ## Architecture
 
@@ -92,10 +101,14 @@ SyncFlow/
 │   ├── transfer/      # File transfer engine (TCP + chunking + sync folders)
 │   ├── networking/    # TCP server/client
 │   ├── crypto/        # E2E crypto (AES-GCM, Ed25519, X25519) + trust store
-│   ├── relay/         # Standalone relay server module (not wired into the UI)
+│   ├── relay/         # Standalone relay module (not wired into the UI)
 │   └── tests/         # Security suite (run_all.sh, 63 checks)
-└── build/             # App icons
+├── build/             # App icons
+└── docs/              # Setup, networking, signing, roadmap
 ```
+
+Packaged apps embed the backend as a **native binary** (PyInstaller, built by
+`build-backend.sh`) — no Python install needed on user machines.
 
 ## Features
 
@@ -110,17 +123,18 @@ SyncFlow/
 
 > **Honest scope:** transfers use a direct LAN connection with application-layer
 > end-to-end encryption — there is **no TLS layer** and no WAN relay in the UI.
-> See `SECURITY_REPORT.md` for the full threat model and test evidence.
+> See [SECURITY_REPORT.md](SECURITY_REPORT.md) for the full threat model and
+> test evidence, and [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## Tests
 
 ```bash
 backend/tests/run_all.sh    # 63 checks against fresh live instances, ~5 min
+npx tsc --noEmit            # typecheck
+python backend/tests/smoke_windows.py   # portable backend smoke (any OS)
 ```
 
-Starts two backend instances on test ports, runs six suites (DoS, protocol/crypto,
-active MITM proxy, WebSocket/app, rogue mDNS, extra scenarios), tears down,
-prints totals. Exit 0 = all green. Typecheck with `npx tsc --noEmit`.
+CI runs the full suite plus Windows/macOS smokes on every push.
 
 ## Technology Stack
 
@@ -130,8 +144,20 @@ prints totals. Exit 0 = all green. Typecheck with `npx tsc --noEmit`.
 | Styling | TailwindCSS 3 |
 | State | Zustand |
 | Animation | Framer Motion |
-| Backend | Python 3.13 (asyncio) |
+| Backend | Python 3.13 (asyncio), packaged via PyInstaller |
 | Discovery | zeroconf (mDNS) |
 | Transfer | Custom TCP protocol |
 | Encryption | cryptography (AES-256-GCM, Ed25519, X25519) |
-| Build | electron-vite + electron-builder |
+| Build | electron-vite + electron-builder, GitHub Actions matrix |
+
+## Platform Notes
+
+- **Linux**: glibc **2.35+** (Ubuntu 22.04, Debian 12, Fedora 36 or newer equivalents)
+- **Windows**: 10/11 x64; allow the firewall prompt on first run
+- **macOS**: 11+ · [first-run guide](docs/macos.md)
+- Roadmap & known limitations: [docs/roadmap.md](docs/roadmap.md)
+
+## Contributing & License
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Released under the [MIT License](LICENSE).
