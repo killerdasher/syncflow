@@ -105,22 +105,37 @@ jobs:
         # electron-builder must not try to upload (needs a separate GH_TOKEN)
         run: npx electron-builder ${{ matrix.builder_args }} --publish never
 
-      # macOS: one native arch per job (macos-latest = arm64, macos-13 = x86_64)
+      # macOS: one native arch per job (macos-latest = arm64, macos-15-intel = x86_64)
       - name: "macOS: backend deps"
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          PYTHONPATH= "${pythonLocation}/bin/python" -m pip install -r backend/requirements.txt pyinstaller
+          PY="${pythonLocation}/bin/python"
+          "$PY" -c "import sys,os; print('diag exe:',sys.executable); print('diag prefix:',sys.prefix); print('diag PYTHONHOME:',repr(os.environ.get('PYTHONHOME'))); print('diag sys.path[:4]:',sys.path[:4])"
+          env -u PYTHONHOME PYTHONPATH= "$PY" -m pip install -r backend/requirements.txt pyinstaller
 
       - name: "macOS: build + smoke backend"
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          PYTHONPATH= PYTHON="${pythonLocation}/bin/python" ./build-backend.sh
+          PY="${pythonLocation}/bin/python"
+          env -u PYTHONHOME PYTHONPATH= PYTHON="$PY" ./build-backend.sh
           BIN="backend/dist/syncflow-backend/${{ matrix.backend_bin }}"
+          # cryptography's wheel ships its own OpenSSL; if an older image/Homebrew
+          # libssl was collected instead, the frozen backend dies at startup with
+          # "Symbol not found" — overwrite with the wheel's copies
+          VEND=$(env -u PYTHONHOME PYTHONPATH= "$PY" -c "import cryptography.hazmat.bindings as b,os; d=os.path.join(os.path.dirname(b.__file__),'.dylibs'); print(d if os.path.isdir(d) else '')")
+          shopt -s nullglob
+          DYLIBS=("$VEND"/*.dylib)
+          if [ ${#DYLIBS[@]} -gt 0 ]; then
+            cp -f "${DYLIBS[@]}" backend/dist/syncflow-backend/_internal/
+            echo "vendored OpenSSL synced from $VEND"
+          else
+            echo "::warning::no vendored cryptography .dylibs found at '$VEND'"
+          fi
           file "$BIN"
           file "$BIN" | grep -q "${{ matrix.backend_arch }}" || { echo "::error::backend is not ${{ matrix.backend_arch }}"; exit 1; }
-          SYNCFLOW_SMOKE_FROZEN="$BIN" "${pythonLocation}/bin/python" backend/tests/smoke_windows.py
+          SYNCFLOW_SMOKE_FROZEN="$BIN" env -u PYTHONHOME PYTHONPATH= "$PY" backend/tests/smoke_windows.py
 
       - name: "macOS: build dmg"
         if: runner.os == 'macOS'
