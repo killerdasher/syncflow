@@ -23,7 +23,12 @@ jobs:
         run: pip install -r backend/requirements.txt pyinstaller
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: |
+          npm ci
+          # npm >=11.19 gates dependency install scripts (allowScripts is
+          # advisory); fetch the Electron runtime binary explicitly so any
+          # runner npm version gets a working binary.
+          node node_modules/electron/install.js
 
       - name: Typecheck
         run: npx tsc --noEmit

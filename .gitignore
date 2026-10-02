@@ -22,3 +22,6 @@ backend/build/
 *.rpm
 *.dmg
 *.blockmap
+
+# AI local task board
+.ai-tasks/
