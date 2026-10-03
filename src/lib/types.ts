@@ -37,6 +37,9 @@ export interface FileItem {
   size: number
   type: string
   hash?: string
+  /** Companion-only: the picked browser File, streamed by Phase 3 uploads.
+   *  Never serialized (persisted cards get `{}` back — check `instanceof`). */
+  blob?: Blob
 }
 
 export interface Settings {

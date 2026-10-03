@@ -289,7 +289,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: "Attest build provenance (verify with gh attestation verify)"
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'release-files/**'
 

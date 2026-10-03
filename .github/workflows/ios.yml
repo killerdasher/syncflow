@@ -1,0 +1,43 @@
+# Phase 4, Path A ($0): keep the iOS companion target compiling.
+# Builds the Capacitor iOS project for the simulator on every main push —
+# no signing, no artifacts ("iOS is building" honesty, not a shippable app).
+# Path B (archive/TestFlight) unlocks when an Apple Developer account ($99/yr)
+# exists; see docs/mobile.md.
+name: iOS build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  simulator-build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Renderer web build (companion)
+        run: npx vite build --config vite.web.config.ts
+
+      - name: Capacitor sync (web assets into ios/)
+        run: npx cap sync ios
+
+      - name: Xcode simulator build (unsigned)
+        run: |
+          cd ios/App
+          xcodebuild \
+            -project App.xcodeproj \
+            -scheme App \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            build

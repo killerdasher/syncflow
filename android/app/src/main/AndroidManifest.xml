@@ -19,6 +19,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- QR deep link: any camera that reads the desktop's
+                 syncflow://pair?... QR routes it into the companion
+                 (handled by @capacitor/app's appUrlOpen). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="syncflow" android:host="pair" />
+            </intent-filter>
         </activity>
 
         <provider

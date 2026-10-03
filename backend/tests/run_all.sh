@@ -2,7 +2,7 @@
 # SyncFlow security suite - one-command runner.
 #
 # Starts two fresh backend instances (A: TCP 19974 / WS 18993,
-# B: TCP 19975 / WS 18995), runs all nine suites against them, prints a
+# B: TCP 19975 / WS 18995), runs all eleven suites against them, prints a
 # PASS/FAIL summary and tears everything down. Exit code 0 = all green.
 #
 # Usage:  ./run_all.sh
@@ -21,7 +21,7 @@ echo "=== SyncFlow security suite ==="
 echo "python: $PY"
 
 # --- free our test ports (numeric pids only; never pattern-kill) -------
-for port in 19974 19975 19976 18993 18995 19977; do
+for port in 19974 19975 19976 18993 18995 19977 19986 19996 19988 19998; do
   pids=$(ss -ltnp 2>/dev/null | grep -P "[:.]$port\b" | grep -oP 'pid=\K[0-9]+' | sort -u)
   for pid in $pids; do
     kill "$pid" 2>/dev/null
@@ -30,8 +30,8 @@ done
 sleep 1
 
 # --- fresh state ------------------------------------------------------
-rm -rf "$ART/sfA" "$ART/sfB" "$ART/sfT" "$ART/sfOTHER" "$ART/sfM" "$ART/sfATK" "$ART/sfPin" "$ART/sfPinOther"
-rm -rf "$HOME/Downloads/SyncFlow-testA" "$HOME/Downloads/SyncFlow-testB"
+rm -rf "$ART/sfA" "$ART/sfB" "$ART/sfT" "$ART/sfOTHER" "$ART/sfM" "$ART/sfATK" "$ART/sfPin" "$ART/sfPinOther" "$ART/sfDN"
+rm -rf "$HOME/Downloads/SyncFlow-testA" "$HOME/Downloads/SyncFlow-testB" "$HOME/Downloads/SyncFlow-testDN"
 
 # --- start instances --------------------------------------------------
 env SYNCFLOW_HOME="$ART/sfA" SYNCFLOW_TCP_PORT=19974 SYNCFLOW_WS_PORT=18993 \
@@ -93,6 +93,8 @@ run_suite t_extra      "$HERE/t_extra.py"
 run_suite t_attacks   "$HERE/t_attacks.py"
 run_suite t_crypto    "$HERE/t_crypto.py"
 run_suite t_lan_auth  "$HERE/t_lan_auth.py"
+run_suite t_upload    "$HERE/t_upload.py"
+run_suite t_download  "$HERE/t_download.py"
 
 echo ""
 echo "======================================"

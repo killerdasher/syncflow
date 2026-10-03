@@ -17,6 +17,7 @@ import { ChatPage } from './components/Chat/ChatPage'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useSyncEngine } from './hooks/useSyncEngine'
 import { IS_COMPANION } from './lib/bridge'
+import { uploadFiles } from './lib/upload'
 import { ConnectScreen } from './components/Connect/ConnectScreen'
 import { useTransferStore } from './stores/transferStore'
 import { useDeviceStore } from './stores/deviceStore'
@@ -82,13 +83,16 @@ function App() {
     }
     addTransfer(newTransfer)
 
-    const success = await send({
-      type: 'command:send',
-      targetIp: targetDevice.ip,
-      ...(targetDeviceId ? { targetDeviceId } : {}),
-      files: files.map((f) => f.path),
-      transferId: newTransfer.id,
-    })
+    const success =
+      IS_COMPANION && files.length > 0 && files.every((f) => f.blob instanceof Blob)
+        ? await uploadFiles(files, { ip: targetDevice.ip, deviceId: targetDeviceId }, newTransfer.id)
+        : await send({
+            type: 'command:send',
+            targetIp: targetDevice.ip,
+            ...(targetDeviceId ? { targetDeviceId } : {}),
+            files: files.map((f) => f.path),
+            transferId: newTransfer.id,
+          })
 
     if (!success) {
       useTransferStore.getState().updateTransfer(newTransfer.id, {
@@ -121,6 +125,7 @@ function App() {
             path: window.electronAPI?.getFilePath?.(f) || f.name,
             size: f.size,
             type: f.type || 'application/octet-stream',
+            blob: f,
           }))
         )
       })
@@ -173,6 +178,7 @@ function App() {
         path: window.electronAPI?.getFilePath?.(f) || f.webkitRelativePath || f.name,
         size: f.size,
         type: f.type || 'application/octet-stream',
+        blob: f,
       }))
       await routeFiles(fileItems)
     },
