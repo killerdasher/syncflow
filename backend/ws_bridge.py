@@ -6,6 +6,7 @@ from websockets.server import serve
 
 from pairing import CODE_TTL, lan_ip, pair_qr
 from upload import UPLOAD_JSON_TYPES
+from download import DOWNLOAD_JSON_TYPES
 
 # Browser-enforced origins only: file:// pages report the string "null",
 # the Vite dev server reports its localhost origin. Cross-origin browser
@@ -44,6 +45,7 @@ class WebSocketBridge:
         self.lan_mode = self.host not in ("127.0.0.1", "::1")
         self.pairing = None  # set by set_pairing(); fail-closed if absent
         self.upload = None   # set by set_upload(); Phase 3 chunked uploads
+        self.download = None  # set by set_download(); Phase 3 chunked downloads
         self.clients: Set = set()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._server = None
@@ -54,6 +56,9 @@ class WebSocketBridge:
 
     def set_upload(self, manager):
         self.upload = manager
+
+    def set_download(self, manager):
+        self.download = manager
 
     def on(self, message_type: str, handler: Callable):
         self._handlers[message_type] = handler
@@ -103,6 +108,12 @@ class WebSocketBridge:
                             ws,
                             {"type": "auth_required",
                              "error": "pairing required: send pairing:generate from the desktop, then pairing/auth"},
+                        )
+                    elif self.download is not None and self.download.is_active(ws):
+                        # Downloading is read-only: client binary frames are
+                        # a protocol violation while a stream is pushing.
+                        await self._safe_send(
+                            ws, {"type": "error", "error": "unexpected binary frame during download"},
                         )
                     elif self.upload is not None:
                         await self.upload.on_chunk(ws, bytes(message))
@@ -193,6 +204,17 @@ class WebSocketBridge:
                         await self._safe_send(ws, {"type": "error", "error": _san(e, 200)})
                     continue
 
+                # Phase 3 download control frames — same contract.
+                if self.download is not None and msg_type in DOWNLOAD_JSON_TYPES:
+                    try:
+                        response = await self.download.handle(ws, data)
+                        if response:
+                            await ws.send(json.dumps(response))
+                    except Exception as e:
+                        print(f"Handler error for {_san(msg_type, 64)}: {_san(e, 160)}", flush=True)
+                        await self._safe_send(ws, {"type": "error", "error": _san(e, 200)})
+                    continue
+
                 handler = self._handlers.get(msg_type)
                 if handler is None:
                     print(f"Unknown message type: {_san(msg_type, 64)}", flush=True)
@@ -211,6 +233,8 @@ class WebSocketBridge:
         finally:
             if self.upload is not None:
                 self.upload.detach(ws)
+            if self.download is not None:
+                self.download.detach(ws)
             self.clients.discard(ws)
             print(f"Electron client disconnected ({len(self.clients)} remaining)", flush=True)
 

@@ -1,12 +1,30 @@
-import { useState, type FormEvent } from 'react'
-import { Wifi, KeyRound } from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { Wifi, KeyRound, QrCode } from 'lucide-react'
+import { Capacitor } from '@capacitor/core'
+import { LocalNotifications } from '@capacitor/local-notifications'
 import {
   connectCompanion,
   forgetCompanion,
   hasSavedToken,
   savedHost,
 } from '../../lib/bridge'
+import type { PairTarget } from '../../lib/qr'
+import { takePendingPair, onPendingPair } from '../../lib/deepLink'
+import { scanPairQr } from '../../lib/scan'
 import { GlowButton } from '../shared/GlowButton'
+
+/** Best-effort permission ask — must run inside a user gesture (submit/scan). */
+function askNotifyPermission(): void {
+  try {
+    if (Capacitor.isNativePlatform()) {
+      void LocalNotifications.requestPermissions().catch(() => undefined)
+    } else if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      void Notification.requestPermission().catch(() => undefined)
+    }
+  } catch {
+    /* notifications are best-effort */
+  }
+}
 
 function mapError(result: string): string {
   switch (result) {
@@ -42,16 +60,59 @@ export function ConnectScreen() {
   const [error, setError] = useState<string | null>(null)
   const [hadToken] = useState(hasSavedToken())
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (busy) return
+  const runConnect = async (targetHost: string, targetCode?: string) => {
     setBusy(true)
     setError(null)
-    const result = await connectCompanion(host, code || undefined)
+    const result = await connectCompanion(targetHost, targetCode || undefined)
     if (result !== 'authed' && result !== 'paired') {
       setError(mapError(result))
     } else {
       setCode('')
+    }
+    setBusy(false)
+  }
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (busy) return
+    askNotifyPermission()
+    await runConnect(host, code || undefined)
+  }
+
+  // QR deep link path: a system camera opened syncflow://pair?... and the
+  // app received it via the scheme intent (or the launch URL).
+  useEffect(() => {
+    const handlePair = (t: PairTarget) => {
+      setHost(t.host)
+      setCode('')
+      void runConnect(t.host, t.code)
+    }
+    const initial = takePendingPair()
+    if (initial) handlePair(initial)
+    return onPendingPair(handlePair)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const scan = async () => {
+    if (busy) return
+    askNotifyPermission()
+    setBusy(true)
+    setError(null)
+    try {
+      const target = await scanPairQr()
+      if (!target) {
+        setError('That QR code is not a SyncFlow pairing code.')
+        setBusy(false)
+        return
+      }
+      setHost(target.host)
+      setCode('')
+      const result = await connectCompanion(target.host, target.code)
+      if (result !== 'authed' && result !== 'paired') {
+        setError(mapError(result))
+      }
+    } catch (e: any) {
+      setError(String(e?.message || 'Scanner failed — enter the code manually.'))
     }
     setBusy(false)
   }
@@ -109,6 +170,17 @@ export function ConnectScreen() {
             <GlowButton disabled={busy} icon={<KeyRound size={14} />}>
               {busy ? 'Connecting…' : 'Connect'}
             </GlowButton>
+            {Capacitor.isNativePlatform() && (
+              <button
+                type="button"
+                onClick={scan}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 text-xs text-frost-300 hover:text-cyber-teal transition-colors disabled:opacity-50"
+              >
+                <QrCode size={14} />
+                Scan QR
+              </button>
+            )}
             {hadToken && (
               <button
                 type="button"
@@ -123,7 +195,8 @@ export function ConnectScreen() {
 
         <p className="text-[11px] text-frost-500 mt-5">
           Codes are single-use and last 5 minutes. No account, no internet — traffic
-          never leaves your LAN.
+          never leaves your LAN. On Android you can also scan the desktop's QR with
+          your system camera — it opens this app automatically.
         </p>
       </div>
     </div>

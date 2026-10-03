@@ -11,6 +11,10 @@
  *   6. re-pair, then the real uploadFiles() flow: announce -> binary
  *      chunks -> file-done -> finish -> transfer:new, delivered through
  *      the engine to this backend's own TCP listener and verified on disk
+ *   7. the real fetchFileFromDesktop() flow: pull that delivered file
+ *      back over WS (ready -> binary -> file-done) and sha256-verify it
+ *   8. parsePairQr() accepts the desktop's syncflow://pair payload and
+ *      rejects foreign/malformed codes
  *
  * Shims localStorage/window over Node globals, bundles the real bridge with
  * esbuild, and uses Node's built-in WebSocket — no browser needed.
@@ -31,7 +35,7 @@ const fail = (msg) => {
   console.error('[bridge-test] FAIL:', msg)
   process.exit(1)
 }
-setTimeout(() => fail('overall timeout (60s)'), 60000).unref()
+setTimeout(() => fail('overall timeout (90s)'), 90000).unref()
 
 function lanIp() {
   return new Promise((resolve) => {
@@ -151,7 +155,9 @@ async function main() {
   writeFileSync(
     entry,
     `export * from ${JSON.stringify(join(root, 'src', 'lib', 'bridge.ts'))}\n` +
-      `export * from ${JSON.stringify(join(root, 'src', 'lib', 'upload.ts'))}\n`
+      `export * from ${JSON.stringify(join(root, 'src', 'lib', 'upload.ts'))}\n` +
+      `export * from ${JSON.stringify(join(root, 'src', 'lib', 'download.ts'))}\n` +
+      `export * from ${JSON.stringify(join(root, 'src', 'lib', 'qr.ts'))}\n`
   )
   await build({
     entryPoints: [entry],
@@ -292,11 +298,52 @@ async function main() {
     const tail = seen.slice(-10).map((m) => `${m.type}${m.error ? ':' + m.error : ''}${m.status ? ':' + m.status : ''}`)
     fail(`uploaded file never arrived in the receive dir (frames: ${tail.join(' | ')}; log: /tmp/bridge-backend.log)`)
   }
-  rmSync(receivedPath, { force: true })
   log('renderer upload delivered + sha256 matched')
 
+  // 7. renderer download flow — pull the delivered file back over WS
+  //    (receivedPath stays on disk until after this — the desktop streams
+  //    it from its receive dir)
+  const list = await wsRequest(desktopUrl, { type: 'transfers:list' }, 'transfers:update')
+  const receivedTask = (list.completed || []).find(
+    (t) => Array.isArray(t.destPaths) && t.destPaths.length === 1 && t.files?.[0]?.name === upName
+  )
+  if (!receivedTask) {
+    fail(`no completed receive task with destPaths for ${upName} (have: ${(list.completed || []).map((t) => t.id).join(',') || 'none'})`)
+  }
+  const got = await bridge.fetchFileFromDesktop(receivedTask.id, 0)
+  if (!got) fail('fetchFileFromDesktop returned nothing')
+  const gotSha = createHash('sha256').update(Buffer.from(await got.blob.arrayBuffer())).digest('hex')
+  if (got.blob.size !== payload.length) fail(`download size ${got.blob.size} != ${payload.length}`)
+  if (gotSha !== sha) fail(`download sha mismatch: ${gotSha} != ${sha}`)
+  if (got.name !== upName) fail(`download name ${got.name} != ${upName}`)
+  if (got.sha256 !== sha) fail(`server-reported sha mismatch: ${got.sha256} != ${sha}`)
+  log('renderer download round trip + sha256 matched (server and client)')
+
+  // 8. QR pair parsing — the exact payload the desktop renders
+  const t1 = bridge.parsePairQr('syncflow://pair?host=192.168.1.20&port=18973&code=ABCD2345')
+  if (!t1 || t1.host !== 'ws://192.168.1.20:18973' || t1.port !== 18973 || t1.code !== 'ABCD2345') {
+    fail(`parsePairQr syncflow payload: ${JSON.stringify(t1)}`)
+  }
+  const t2 = bridge.parsePairQr('syncflow://pair?host=fe80::1&port=18973&code=ab cd2345'.replace(' ', ''))
+  const t2b = bridge.parsePairQr('syncflow://pair?host=fe80::1&port=18973&code=abcd2345')
+  if (!t2b || t2b.host !== 'ws://[fe80::1]:18973' || t2b.code !== 'ABCD2345') {
+    fail(`parsePairQr IPv6/lowercase: ${JSON.stringify(t2 || t2b)}`)
+  }
+  if (bridge.parsePairQr('syncflow://pair?host=1.2.3.4&code=SHORT') !== null) {
+    fail('parsePairQr accepted a short code')
+  }
+  if (bridge.parsePairQr('syncflow://pair?host=bad host!&port=18973&code=ABCD2345') !== null) {
+    fail('parsePairQr accepted a hostile host')
+  }
+  if (bridge.parsePairQr('http://evil.example.com/?code=ABCD2345') !== null) {
+    fail('parsePairQr accepted a foreign scheme')
+  }
+  if (bridge.parsePairQr('garbage') !== null) fail('parsePairQr accepted garbage')
+  log('QR pair parsing accepts ours, rejects foreign/malformed')
+
+  rmSync(receivedPath, { force: true })
   cleanup()
-  console.log('[bridge-test] PASS (6 steps)')
+  console.log('[bridge-test] PASS (8 steps)')
   process.exit(0)
 }
 

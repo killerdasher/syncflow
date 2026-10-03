@@ -1,10 +1,11 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban, Clock, FolderOpen } from 'lucide-react'
+import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban, Clock, FolderOpen, Download, Loader2 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Transfer } from '../../lib/types'
 import { IS_COMPANION } from '../../lib/bridge'
 import { uploadFiles } from '../../lib/upload'
+import { fetchFileFromDesktop, saveBlobToPhone } from '../../lib/download'
 import { formatBytes, formatSpeed, formatDuration } from '../../lib/constants'
 import { ProgressRing } from './ProgressRing'
 import { useTransferStore } from '../../stores/transferStore'
@@ -26,6 +27,8 @@ const fileIconMap: Record<string, any> = {
 export const TransferCard = memo(function TransferCard({ transfer }: TransferCardProps) {
   const cancelTransfer = useTransferStore((s) => s.cancelTransfer)
   const addTransfer = useTransferStore((s) => s.addTransfer)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const isActive = transfer.status === 'transferring' || transfer.status === 'pending'
   const isAwaiting = transfer.status === 'awaiting'
@@ -84,6 +87,23 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
     if (window.electronAPI) {
       await window.electronAPI.send({ type: 'transfer:decline', transferId: transfer.id })
     }
+  }
+
+  // Companion-only: pull each completed file off the desktop over WS and
+  // hand it to the share sheet (native) or a browser download (web).
+  const handleSave = async () => {
+    if (saving) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      for (let i = 0; i < transfer.files.length; i++) {
+        const got = await fetchFileFromDesktop(transfer.id, i)
+        await saveBlobToPhone(got.blob, got.name)
+      }
+    } catch (e: any) {
+      setSaveError(String(e?.message || e))
+    }
+    setSaving(false)
   }
 
   // Received files: destPath from the backend. Sent files: reveal the local source.
@@ -177,6 +197,17 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
                   <FolderOpen size={12} />
                 </button>
               )}
+              {IS_COMPANION && isCompleted && (
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  aria-label="Save to device"
+                  title="Save to device"
+                  className="w-7 h-7 flex items-center justify-center rounded-lg text-frost-300 hover:text-cyber-teal hover:bg-cyber-teal/10 transition-colors disabled:opacity-50"
+                >
+                  {saving ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                </button>
+              )}
             </div>
           </div>
 
@@ -238,6 +269,16 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
                   Chain verified
                 </span>
               )}
+              {IS_COMPANION && saving && (
+                <span className="text-frost-400 ml-1">Saving to device…</span>
+              )}
+            </div>
+          )}
+
+          {IS_COMPANION && saveError && (
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
+              <AlertCircle size={12} />
+              {saveError}
             </div>
           )}
         </div>

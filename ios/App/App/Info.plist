@@ -6,6 +6,19 @@
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>io.github.killerdasher.syncflow.pair</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>syncflow</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleDisplayName</key>
         <string>SyncFlow</string>
 	<key>CFBundleExecutable</key>

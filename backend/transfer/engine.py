@@ -110,6 +110,10 @@ class TransferTask:
             "verified": self.verified,
             "fromDevice": self.from_device,
             "toDevice": self.to_device,
+            # Phase 3 companion download: server-side locations of received
+            # files (index-aligned with `files`); empty for sends, whose
+            # source paths already live in files[i].path.
+            "destPaths": list(self.dest_paths),
         }
 
 

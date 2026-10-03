@@ -1,6 +1,6 @@
 # SyncFlow Security Audit — 2026-10-03
 
-**Status:** complete, all findings sealed · **Suite:** 114/114 checks green on
+**Status:** complete, all findings sealed · **Suite:** 124/124 checks green on
 Ubuntu, Windows and macOS CI · **Dependencies:** `npm audit` 0 vulnerabilities,
 `pip-audit` 0 known vulnerabilities
 
@@ -26,10 +26,10 @@ run) + source review of every listening socket + dependency auditing.
 Environment: Parrot/Linux dev machine; CI replicates the suite on
 Ubuntu, Windows and macOS.
 
-## 2. Automated evidence (114 checks)
+## 2. Automated evidence (124 checks)
 
 `backend/tests/run_all.sh` boots two fresh instances (A: TCP 19974 / WS 18993,
-B: TCP 19975 / WS 18995) and runs ten suites:
+B: TCP 19975 / WS 18995) and runs eleven suites:
 
 | Suite | Checks | What it proves |
 |---|---:|---|
@@ -43,6 +43,7 @@ B: TCP 19975 / WS 18995) and runs ten suites:
 | `t_crypto` | 8 | **E2E round-trip proof**: X25519 directional keys, AES-256-GCM bidirectional + tamper rejection + nonce uniqueness, Ed25519 forgery/wrong-key rejection, full signed handshake both ways, stale/forged offer rejection, identity persistence + key-file perms |
 | `t_lan_auth` | 23 | **Phase 0 LAN mode + pairing**: loopback default unchanged, opt-in `0.0.0.0` bind, remote commands refused pre-pairing, local-only code minting, wrong-code/single-use/token paths, forged tokens, Capacitor origin, pairing state 0600, QR/endpoint payload (`qr`, `host`, `port`, `lanMode`, TTL); unit TTL + 5-fail lockout |
 | `t_upload` | 12 | **Phase 3 companion upload**: unauth JSON/binary refused pre-pairing, announce/ready/chunk/end/finish state machine, traversal names land as bare basenames, size caps + sequence enforcement, oversized-frame abort (session dies, connection lives), cancel + disconnect staging cleanup, 600 KB two-file round trip through the engine, progress broadcasts |
+| `t_download` | 10 | **Phase 3 companion download**: unknown/malformed transfers and bad file indices rejected, 64 MB stream byte-count + sha256 match, concurrent second request refused while streaming, binary frame during download refused, cancel mid-stream stops the push and frees the transfer, disconnect cleanup, sent-file source path streams, vanished source fails clean |
 
 CI runs the full suite on Linux and the crypto proof standalone on
 **Windows and macOS** (`.github/workflows/ci.yml`), so the encryption claim is
@@ -112,7 +113,7 @@ mDNS TXT sanitization.
 ## 7. Reproduce
 
 ```bash
-backend/tests/run_all.sh            # 114 checks, fresh instances, ~5 min
+backend/tests/run_all.sh            # 124 checks, fresh instances, ~5 min
 backend/venv/bin/pip-audit -r backend/requirements.txt
 npm audit                           # 0 vulnerabilities
 npx tsc --noEmit                    # typecheck
