@@ -220,6 +220,21 @@ jobs:
           cp build/icon.png release-files/syncflow-icon.png
           chmod +x release-files/install-appimage.sh
 
+      - name: Sanitize asset names (GitHub stores spaces as dots)
+        run: |
+          # GitHub's release-asset API replaces spaces with dots, but files
+          # hashed under their on-disk names would then not match SHA256SUMS.txt
+          # (`sha256sum -c` fails for e.g. "SyncFlow Setup 1.1.0.exe" vs
+          # "SyncFlow.Setup.1.1.0.exe"). Rename before hashing so SUMS, the
+          # attestation subject paths and the uploaded assets all agree.
+          cd release-files
+          for f in *; do
+            case "$f" in
+              *" "*) mv -n -- "$f" "${f// /.}" ;;
+            esac
+          done
+          ls -la
+
       - name: Merge macOS update feeds (x64 + arm64)
         run: |
           python3 - <<'PY'
