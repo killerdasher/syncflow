@@ -111,7 +111,7 @@ External deps: none for sideload; $25 only if Play Store.
 
 Estimated: 2–3 sessions (chunking + resume is the bulk).
 
-## Phase 4 — iOS
+## Phase 4 — iOS — **Path A LANDED 2026-10-03** (compile-check only; Path B awaits the $99 Apple Developer account)
 
 **Predicted prerequisites (the real blocker):**
 
@@ -121,8 +121,8 @@ Estimated: 2–3 sessions (chunking + resume is the bulk).
 | Mac | $0 if using GitHub `macos-*` runners | Xcode preinstalled; `cap add ios` + `xcodebuild` run there; `ios/` project committed from CI |
 | Certs in CI | $0 | Distribution cert (.p12) + provisioning profile as secrets; App Store Connect API key for upload |
 
-**Path A (now, $0):** CI job on `macos-latest` builds the iOS project and a
-simulator `.app` on every main push — keeps the iOS target compiling, no
+**Path A (now, $0):** ✅ `.github/workflows/ios.yml` — CI job on `macos-latest` builds the iOS project and a
+simulator `.app` on every main push (shared `App` scheme committed; SPM template ships no workspace, so CI builds `-project App.xcodeproj`) — keeps the iOS target compiling, no
 signing. Release artifacts: none yet. This is "iOS is building" honesty,
 not a shippable app.
 
