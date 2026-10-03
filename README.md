@@ -14,14 +14,15 @@
   <a href="https://github.com/killerdasher/syncflow/actions/workflows/ci.yml"><img src="https://github.com/killerdasher/syncflow/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/killerdasher/syncflow/releases"><img src="https://img.shields.io/github/v/release/killerdasher/syncflow" alt="Release"></a>
   <a href="https://github.com/killerdasher/syncflow/releases"><img src="https://img.shields.io/github/downloads/killerdasher/syncflow/total" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/tests-130%20green-brightgreen" alt="Tests: 130 checks">
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-0ea5e9" alt="Platform: Windows | Linux | macOS">
+  <img src="https://img.shields.io/badge/tests-134%20green-brightgreen" alt="Tests: 134 checks">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android-0ea5e9" alt="Platform: Windows | Linux | macOS | Android">
   <a href="https://github.com/killerdasher/syncflow/attestations"><img src="https://img.shields.io/github/attestations/killerdasher/syncflow" alt="Build attestations"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
 </p>
 
 <p align="center">
   <a href="https://github.com/killerdasher/syncflow/releases/latest"><img src="https://img.shields.io/badge/Download-Releases-0ea5e9?style=for-the-badge" alt="Download"></a>
+  <a href="https://github.com/killerdasher/syncflow/releases/latest"><img src="https://img.shields.io/badge/Android-APK%20on%20Releases-3ddc84?style=for-the-badge" alt="Android APK"></a>
   <a href="SECURITY_REPORT.md"><img src="https://img.shields.io/badge/Security-Report%20%26%20Threat%20Model-7c3aed?style=for-the-badge" alt="Security report"></a>
   <a href="docs/roadmap.md"><img src="https://img.shields.io/badge/Roadmap-What%27s%20next-ec4899?style=for-the-badge" alt="Roadmap"></a>
 </p>
@@ -30,7 +31,7 @@
 
 | | |
 |---|---|
-| **End-to-end encrypted** | X25519 key exchange, Ed25519 signatures, AES-256-GCM payloads — keys never leave your devices. Trust-on-first-use pinning, manageable in Settings. |
+| **End-to-end encrypted** | X25519 key exchange, Ed25519 signatures, AES-256-GCM payloads — keys never leave your devices. Trust-on-first-use pinning, manageable in Settings, plus a **16-icon SAS check** to verify pairing out-of-band. |
 | **Local network only** | No cloud, no accounts, no telemetry. Devices find each other via mDNS; data takes a direct LAN path. |
 | **Verified transfers** | Per-chunk SHA-256 with blockchain-style chaining — the UI shows **Chain verified** on arrival. |
 | **Sync folders** | Pair a local folder with a device; push new/changed files manually or on an interval (1/5/15 min). |
@@ -103,7 +104,7 @@ SyncFlow/
 │   ├── networking/    # TCP server/client
 │   ├── crypto/        # E2E crypto (AES-GCM, Ed25519, X25519) + trust store
 │   ├── relay/         # Standalone relay module (not wired into the UI)
-│   └── tests/         # Security suite (run_all.sh, 130 checks)
+│   └── tests/         # Security suite (run_all.sh, 134 checks)
 ├── build/             # App icons
 └── docs/              # Setup, networking, signing, roadmap, mobile plan
 ```
@@ -162,13 +163,14 @@ build-windows.bat      # Windows: NSIS installer + portable
 ```
 
 Releases are built automatically by CI: push a tag `vX.Y.Z` (matching
-`package.json`) and the **Release** workflow produces all OS artifacts, then
+`package.json`) and the **Release** workflow produces all OS artifacts —
+Windows/Linux/macOS installers **and the Android companion APK** — then
 opens a **draft** GitHub Release for review.
 
 ## Tests
 
 ```bash
-backend/tests/run_all.sh    # 130 checks against fresh live instances, ~5 min
+backend/tests/run_all.sh    # 134 checks against fresh live instances, ~5 min
 npx tsc --noEmit            # typecheck
 python backend/tests/smoke_windows.py   # portable backend smoke (any OS)
 ```
@@ -180,8 +182,8 @@ proof on every push.
 
 | Layer | Tech |
 |-------|------|
-| UI | Electron + React 18 + TypeScript |
-| Styling | TailwindCSS 3 |
+| UI | Electron + React 19 + TypeScript |
+| Styling | TailwindCSS 4 |
 | State | Zustand |
 | Animation | Framer Motion |
 | Backend | Python 3.13 (asyncio), packaged via PyInstaller |
@@ -197,8 +199,10 @@ proof on every push.
 - **macOS**: 11+ · [first-run guide](docs/macos.md)
 - Roadmap & known limitations: [docs/roadmap.md](docs/roadmap.md)
 - Mobile companion plan (Android/iOS): [docs/mobile.md](docs/mobile.md)
+- Wire protocol specification: [docs/protocol.md](docs/protocol.md)
 
 ## Contributing & License
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 Released under the [MIT License](LICENSE).

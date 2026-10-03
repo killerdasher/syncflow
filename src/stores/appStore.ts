@@ -9,6 +9,13 @@ export interface PairingSession {
   expiresAt: number
 }
 
+/** Result of the out-of-band SAS verification for one pinned peer. */
+export interface SasResult {
+  peerDeviceId: string
+  codes: number[]
+  hash: string
+}
+
 interface AppState {
   backendConnected: boolean
   setBackendConnected: (connected: boolean) => void
@@ -24,6 +31,9 @@ interface AppState {
   /** Companion (Phase 1) auth state — connect screen shows until true */
   companionAuthed: boolean
   setCompanionAuthed: (v: boolean) => void
+  /** Latest SAS derivation reply (identity:sas), null = none yet */
+  sas: SasResult | null
+  setSas: (s: SasResult | null) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -38,4 +48,6 @@ export const useAppStore = create<AppState>((set) => ({
   setPairingError: (e) => set({ pairingError: e }),
   companionAuthed: false,
   setCompanionAuthed: (v) => set({ companionAuthed: v }),
+  sas: null,
+  setSas: (s) => set({ sas: s }),
 }))

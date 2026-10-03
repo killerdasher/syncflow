@@ -39,7 +39,7 @@ transport shim.
 - **Standalone Android** (phone runs the full protocol) remains a later
   large effort; companion validates demand first.
 
-## Phase 0 — Backend: LAN mode + pairing-code auth (prerequisite) — **LANDED 2026-10-03** (`SYNCFLOW_WS_HOST`, `backend/pairing.py`, `t_lan_auth` 23 checks, suite 130/130)
+## Phase 0 — Backend: LAN mode + pairing-code auth (prerequisite) — **LANDED 2026-10-03** (`SYNCFLOW_WS_HOST`, `backend/pairing.py`, `t_lan_auth` 27 checks, suite 134/134)
 
 All desktop-relevant; lands on `main` with tests.
 
@@ -51,7 +51,7 @@ All desktop-relevant; lands on `main` with tests.
 | Origin allowlist | Add Capacitor origins (`capacitor://localhost`, `https://localhost`, `http://localhost` served builds) — but origin is **not** the auth mechanism anymore; auth is code/token |
 | Templates to reuse | `backend/relay/server.py:19-57` already has token issue/verify (`auth` → `auth_ok`) — port that pattern |
 | Docs | Update `docs/networking.md` (table row for LAN mode), `SECURITY.md` threat model, README limitation bullet |
-| Tests | Extend the 130-check suite: happy pairing, wrong-code lockout, token replay, unauthenticated command rejection, LAN-vs-loopback bind, Capacitor origin acceptance, loopback default unchanged |
+| Tests | Extend the 134-check suite: happy pairing, wrong-code lockout, token replay, unauthenticated command rejection, LAN-vs-loopback bind, Capacitor origin acceptance, loopback default unchanged |
 
 Estimated: 1–2 working sessions. Risk: low — opt-in, defaults preserve
 today's behavior exactly.
@@ -159,7 +159,9 @@ Blocker: account, not code.
   step already globs all of `release-files/**` → mobile files get signed
   provenance too.
 - README: add Android badge/link under the desktop downloads once the
-  first APK ships.
+  first APK ships. — **DONE 2026-10-03** (v1.1.1 published, Android
+  for-the-badge added next to the desktop Download badge, platform badge
+  now lists Android).
 
 ## Predicted timeline & effort
 

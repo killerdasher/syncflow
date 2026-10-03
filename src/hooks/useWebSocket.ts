@@ -210,6 +210,15 @@ export function useWebSocket() {
             useSettingsStore.getState().updateSettings({ deviceName: msg.deviceName })
           }
           break
+        case 'identity:sas':
+          if (msg.peerDeviceId && Array.isArray(msg.codes)) {
+            useAppStore.getState().setSas({
+              peerDeviceId: String(msg.peerDeviceId),
+              codes: msg.codes.map(Number),
+              hash: typeof msg.hash === 'string' ? msg.hash : '',
+            })
+          }
+          break
         case 'pairing:code':
           if (msg.code) {
             useAppStore.getState().setPairingError(null)

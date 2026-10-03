@@ -33,12 +33,14 @@ Please include: affected version/OS, reproduction steps, and impact.
   token (5 wrong attempts = 5-minute lockout); unauthenticated sockets can
   only run the pairing/auth handshake. Tokens are stored hashed in an
   owner-only `pairing.json`. Phase 0 of the mobile plan — covered by the
-  `t_lan_auth` suite (20 checks).
+  `t_lan_auth` suite (27 checks).
 
 The latest audit — findings, attack journal, seals and residual risks — is in
 [docs/security-audit.md](docs/security-audit.md). The full threat model,
-hardening notes and 130-check security test evidence are in
-[SECURITY_REPORT.md](SECURITY_REPORT.md).
+hardening notes and 134-check security test evidence are in
+[SECURITY_REPORT.md](SECURITY_REPORT.md). The wire protocol (transports,
+pairing/auth, message catalogue, crypto profile, error catalogue, versioning
+policy) is specified in [docs/protocol.md](docs/protocol.md).
 
 ## Supported Versions
 

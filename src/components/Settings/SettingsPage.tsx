@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { User, FolderOpen, Shield, Network, Save, Check, KeyRound, Trash2 } from 'lucide-react'
+import { User, FolderOpen, Shield, Network, Save, Check, KeyRound, Trash2, ShieldCheck } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useSettingsStore, applySettings } from '../../stores/settingsStore'
 import { usePeerStore } from '../../stores/peerStore'
 import { GlowButton } from '../shared/GlowButton'
 import { PairingCard } from './PairingCard'
+import { VerifyPeerModal } from './VerifyPeerModal'
 import { IS_COMPANION } from '../../lib/bridge'
+import type { PinnedPeer } from '../../lib/types'
 
 type SettingsTab = 'general' | 'network' | 'security' | 'folders'
 
@@ -31,6 +33,7 @@ function timeAgo(ts?: number): string {
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const [saved, setSaved] = useState(false)
+  const [verifyPeer, setVerifyPeer] = useState<PinnedPeer | null>(null)
   const { settings, updateSettings } = useSettingsStore()
   const peers = usePeerStore((s) => s.peers)
 
@@ -257,13 +260,23 @@ export function SettingsPage() {
                               {peer.key} · pinned {timeAgo(peer.firstSeen)} · seen {timeAgo(peer.lastSeen)}
                             </p>
                           </div>
-                          <button
-                            onClick={() => handleForget(peer.key)}
-                            className="flex items-center gap-1 text-xs text-frost-400 hover:text-red-400 transition-colors shrink-0 ml-3"
-                          >
-                            <Trash2 size={12} />
-                            Forget
-                          </button>
+                          <div className="flex items-center gap-3 shrink-0 ml-3">
+                            <button
+                              onClick={() => setVerifyPeer(peer)}
+                              title="Compare icons with this device"
+                              className="flex items-center gap-1 text-xs text-frost-400 hover:text-cyber-teal transition-colors"
+                            >
+                              <ShieldCheck size={12} />
+                              Verify
+                            </button>
+                            <button
+                              onClick={() => handleForget(peer.key)}
+                              className="flex items-center gap-1 text-xs text-frost-400 hover:text-red-400 transition-colors"
+                            >
+                              <Trash2 size={12} />
+                              Forget
+                            </button>
+                          </div>
                         </div>
                       ))}
                       <p className="text-xs text-frost-400">
@@ -319,6 +332,7 @@ export function SettingsPage() {
             )}
           </motion.div>
         </div>
+        <VerifyPeerModal peer={verifyPeer} onClose={() => setVerifyPeer(null)} />
       </div>
     </div>
   )

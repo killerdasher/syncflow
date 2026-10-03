@@ -18,6 +18,7 @@ from download import DownloadManager
 from pairing import PairingManager
 from crypto.e2e import DeviceIdentityKeys
 from crypto.blockchain import sha256_str
+from sas import compute_sas
 
 TARGET_HOST_RE = re.compile(r"^[A-Za-z0-9.\-:]{1,64}$")
 MAX_FILES_PER_SEND = 1000
@@ -84,6 +85,7 @@ class SyncFlowBackend:
         self.ws_bridge.on("chat:send", self._handle_chat_send)
         self.ws_bridge.on("chat:history", self._handle_chat_history)
         self.ws_bridge.on("identity:get", self._handle_identity)
+        self.ws_bridge.on("identity:sas", self._handle_sas)
         self.ws_bridge.on("settings:apply", self._handle_settings)
         self.ws_bridge.on("peers:list", self._handle_peers_list)
         self.ws_bridge.on("peers:forget", self._handle_peers_forget)
@@ -97,6 +99,21 @@ class SyncFlowBackend:
             "x25519Pub": self.identity.x25519_pub_b64,
             "deviceId": self.device_id,
             "deviceName": self.device_name,
+        }
+
+    async def _handle_sas(self, data: dict) -> dict:
+        # Out-of-band verification: both sides recompute the same icon
+        # sequence from the two device IDs (see backend/sas.py).
+        peer = data.get("peerDeviceId")
+        try:
+            result = compute_sas(self.device_id, peer)
+        except ValueError:
+            return {"type": "error", "error": "Invalid device id"}
+        return {
+            "type": "identity:sas",
+            "peerDeviceId": peer,
+            "codes": result["codes"],
+            "hash": result["hash"],
         }
 
     async def _handle_send(self, data: dict) -> dict:

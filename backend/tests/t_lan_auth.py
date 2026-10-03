@@ -270,6 +270,46 @@ def run_unit_tests():
            reloaded.check_token(token)
            and token not in open(os.path.join(tmp, "p3.json")).read(),
            "reloaded ok")
+
+        # SAS (out-of-band icon verification) — import backend/sas.py
+        import hashlib
+        from sas import compute_sas, ICON_COUNT
+
+        a = hashlib.sha256(b"peer-a").hexdigest()[:32]
+        b = hashlib.sha256(b"peer-b").hexdigest()[:32]
+        s1 = compute_sas(a, b)
+        s2 = compute_sas(b, a)
+        ok("L21 unit: SAS deterministic + order-independent",
+           s1 == s2
+           and len(s1["codes"]) == ICON_COUNT
+           and all(isinstance(c, int) and 0 <= c < 64 for c in s1["codes"]),
+           f"codes={s1['codes'][:4]}...")
+
+        # Independent re-derivation straight from the spec text.
+        combined = "".join(sorted((a, b)))
+        expect = hashlib.sha256(combined.encode("ascii")).digest()
+        bits = int.from_bytes(expect[:12], "big")
+        expect_codes = [(bits >> (96 - 6 - 6 * i)) & 0x3F for i in range(16)]
+        ok("L22 unit: SAS matches independent re-derivation",
+           s1["codes"] == expect_codes and s1["hash"] == expect.hex(),
+           f"codes_match={s1['codes'] == expect_codes}")
+
+        c = hashlib.sha256(b"peer-c").hexdigest()[:32]
+        differs = compute_sas(a, c)["hash"] != s1["hash"]
+        bad_ok = False
+        try:
+            compute_sas("not-a-device-id", b)
+        except ValueError:
+            bad_ok = True
+        ok("L23 unit: SAS distinguishes peers + rejects malformed ids",
+           differs and bad_ok, f"differs={differs} bad_ok={bad_ok}")
+
+        self_ok = False
+        try:
+            compute_sas(a, a)
+        except ValueError:
+            self_ok = True
+        ok("L24 unit: SAS refuses self-pair", self_ok, "self_ok=" + str(self_ok))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
