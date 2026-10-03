@@ -299,8 +299,11 @@ class SyncFlowBackend:
         reply: dict = {"type": "settings:applied"}
 
         if auto_accept is not None:
-            self.transfer_engine.set_approval(not bool(auto_accept))
-            reply["autoAccept"] = bool(auto_accept)
+            # Strict: JSON garbage must not flip auto-accept (bool("no") is True).
+            if not isinstance(auto_accept, bool):
+                return {"type": "error", "error": "Invalid auto accept value"}
+            self.transfer_engine.set_approval(not auto_accept)
+            reply["autoAccept"] = auto_accept
 
         if device_name is not None:
             if not isinstance(device_name, str):
@@ -323,13 +326,15 @@ class SyncFlowBackend:
             except (TypeError, ValueError):
                 return {"type": "error", "error": "Invalid max concurrent value"}
 
-        if isinstance(sync_folders, list):
+        if sync_folders is not None:
+            if not isinstance(sync_folders, list):
+                return {"type": "error", "error": "Invalid sync folders"}
             self.transfer_engine.set_sync_folders(sync_folders)
             reply["syncFolders"] = len(self.transfer_engine.sync_folders)
 
+        if path is not None and not isinstance(path, str):
+            return {"type": "error", "error": "Invalid download path"}
         if path:
-            if not isinstance(path, str):
-                return {"type": "error", "error": "Invalid download path"}
             try:
                 expanded = os.path.realpath(os.path.expanduser(path))
                 home = os.path.realpath(os.path.expanduser("~"))
@@ -342,7 +347,9 @@ class SyncFlowBackend:
             except (OSError, ValueError) as e:
                 return {"type": "error", "error": f"Invalid download path: {san(e, 120)}"}
 
-        return reply if len(reply) > 1 else None
+        # Every settings:apply MUST answer (protocol.md §6): a no-op request
+        # still gets settings:applied — swallowing the reply hung clients.
+        return reply
 
     @staticmethod
     def _peer_view(p: dict) -> dict:

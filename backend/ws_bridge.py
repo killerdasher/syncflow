@@ -119,10 +119,13 @@ class WebSocketBridge:
                         await self.upload.on_chunk(ws, bytes(message))
                     continue
 
-                # Robustness: malformed input never kills the connection
+                # Robustness: malformed input never kills the connection.
+                # ValueError (the base of JSONDecodeError/UnicodeDecodeError)
+                # also covers e.g. Python's int-digit conversion limit on
+                # absurdly large numbers — found by t_fuzz F2.
                 try:
                     data = json.loads(message)
-                except (json.JSONDecodeError, UnicodeDecodeError):
+                except ValueError:
                     await self._safe_send(ws, {"type": "error", "error": "invalid JSON"})
                     continue
                 if not isinstance(data, dict):

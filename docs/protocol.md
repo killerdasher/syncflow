@@ -2,7 +2,7 @@
 
 **Status:** descriptive — this document records what the code actually does
 (as of v1.1.1), verified against the source and enforced by the
-137-check test suite. Constants live in code; where this document and the
+147-check test suite. Constants live in code; where this document and the
 code disagree, the code wins and this document is the bug.
 
 Audience: anyone implementing an interoperable client, auditing the
@@ -155,7 +155,7 @@ Facts:
 | `chat:history` | `chat:history {messages}` | last **100** |
 | `identity:get` | `identity:info {signingPub, x25519Pub, deviceId, deviceName}` | |
 | `identity:sas {peerDeviceId}` | `identity:sas {peerDeviceId, codes[16], hash}` \| `error "Invalid device id"` | §10.4 |
-| `settings:apply {…}` | `settings:applied` \| `error` \| *(none)* | downloadPath must be `$HOME`-confined; `syncFolders` ≤50, home-confined |
+| `settings:apply {…}` | `settings:applied` \| `error` | Always answered, even for no-ops (never silent); strict field types (`autoAccept` must be a bool, `syncFolders`/`downloadPath` correct shapes → `error`); downloadPath must be `$HOME`-confined; `syncFolders` ≤50, home-confined |
 | `peers:list` | `peers:list {peers}` | pins as `{key, name, deviceId, firstSeen, lastSeen}` (`pub` stripped) |
 | `peers:forget {key}` | `peers:updated {key, success, peers}` \| `error` | drops a TOFU pin |
 | `transfer:approve {transferId, files?}` | `transfer:decision {transferId, approved:true, success}` | resolves pending receiver approval; `files` = **subset approval**: non-empty list of unique non-negative ints (≤1000), else `error "Invalid file selection"`; range vs the declared file count is checked by the engine (out-of-range ⇒ the engine declines) |
@@ -188,9 +188,10 @@ error?, verified}`, `transfer:error {transferId, error}`,
 timestamp, hash}`, `device:connected {device}` / `device:disconnected
 {deviceId}`, `transfer:new` (companion-staged uploads handed to the engine).
 
-> Known dead type: the renderer has a case for `device:removed` that no
-> backend code sends. There is no `sync:*` family — sync folders travel in
-> `settings:apply`.
+> There is no `device:removed` and no `sync:*` family: device lists are
+> replaced wholesale by `devices:update` refreshes, and sync folders travel
+> in `settings:apply`. Unknown types are ignored by clients per the
+> additive-compatibility policy (§13).
 
 ## 7. Upload protocol (companion → desktop, over the authed WS)
 
@@ -458,7 +459,7 @@ not yet enforced by code):
   discovered devices are untrusted until a transfer handshake + pin says
   otherwise.
 - Reported vulnerabilities: see [SECURITY.md](../SECURITY.md). Test evidence:
-  [security-audit.md](security-audit.md) (137 checks).
+  [security-audit.md](security-audit.md) (147 checks).
 
 ---
 

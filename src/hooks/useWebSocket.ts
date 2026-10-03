@@ -54,7 +54,6 @@ export function useWebSocket() {
   const connected = useRef(false)
   const addDevice = useDeviceStore((s) => s.addDevice)
   const updateDevice = useDeviceStore((s) => s.updateDevice)
-  const removeDevice = useDeviceStore((s) => s.removeDevice)
   const updateTransfer = useTransferStore((s) => s.updateTransfer)
   const addTransfer = useTransferStore((s) => s.addTransfer)
   const addChatMessage = useChatStore((s) => s.addMessage)
@@ -105,9 +104,6 @@ export function useWebSocket() {
           break
         case 'device:disconnected':
           updateDevice(msg.deviceId, { status: 'disconnected' })
-          break
-        case 'device:removed':
-          removeDevice(msg.deviceId)
           break
         case 'transfer:progress':
           ensureTransfer(msg.transferId, {
@@ -288,7 +284,7 @@ export function useWebSocket() {
       window.electronAPI.removeStatusListener()
       connected.current = false
     }
-  }, [addDevice, updateDevice, removeDevice, updateTransfer, addTransfer, addChatMessage, setChatMessages, setSelfId])
+  }, [addDevice, updateDevice, updateTransfer, addTransfer, addChatMessage, setChatMessages, setSelfId])
 
   return { send, connected: connected.current }
 }

@@ -37,7 +37,7 @@ Please include: affected version/OS, reproduction steps, and impact.
 
 The latest audit — findings, attack journal, seals and residual risks — is in
 [docs/security-audit.md](docs/security-audit.md). The full threat model,
-hardening notes and 137-check security test evidence are in
+hardening notes and 147-check security test evidence are in
 [SECURITY_REPORT.md](SECURITY_REPORT.md). The wire protocol (transports,
 pairing/auth, message catalogue, crypto profile, error catalogue, versioning
 policy) is specified in [docs/protocol.md](docs/protocol.md).

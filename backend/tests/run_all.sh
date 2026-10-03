@@ -2,7 +2,7 @@
 # SyncFlow security suite - one-command runner.
 #
 # Starts two fresh backend instances (A: TCP 19974 / WS 18993,
-# B: TCP 19975 / WS 18995), runs all eleven suites against them, prints a
+# B: TCP 19975 / WS 18995), runs all twelve suites against them, prints a
 # PASS/FAIL summary and tears everything down. Exit code 0 = all green.
 #
 # Usage:  ./run_all.sh
@@ -77,9 +77,16 @@ run_suite() {
   echo ""
   echo "########## $label ##########"
   "$PY" -u "$@" 2>&1 | tee "$ART/$label.out"
+  local rc=${PIPESTATUS[0]}
   local p f
   p=$(grep -c '^PASS ' "$ART/$label.out")
   f=$(grep -c '^FAIL ' "$ART/$label.out")
+  # A crashed suite emits neither PASS nor FAIL lines — never let that
+  # read as green: nonzero exit without FAIL lines counts as a failure.
+  if [ "$rc" -ne 0 ] && [ "$f" -eq 0 ]; then
+    echo "FAIL suite $label exited $rc without results (crash?)"
+    f=1
+  fi
   TOTAL_PASS=$((TOTAL_PASS + p))
   TOTAL_FAIL=$((TOTAL_FAIL + f))
 }
@@ -95,6 +102,7 @@ run_suite t_crypto    "$HERE/t_crypto.py"
 run_suite t_lan_auth  "$HERE/t_lan_auth.py"
 run_suite t_upload    "$HERE/t_upload.py"
 run_suite t_download  "$HERE/t_download.py"
+run_suite t_fuzz      "$HERE/t_fuzz.py"
 
 echo ""
 echo "======================================"

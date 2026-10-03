@@ -6,7 +6,7 @@ move.
 ## ✅ v1.0 (current)
 
 Desktop: Windows 10/11, Linux (AppImage/deb/rpm), macOS (Intel + Apple
-Silicon). Transfers, sync folders, chat, mDNS discovery, E2E crypto, 137-check
+Silicon). Transfers, sync folders, chat, mDNS discovery, E2E crypto, 147-check
 security suite, automated 3-OS releases.
 
 ## 🔜 Next
@@ -16,7 +16,7 @@ security suite, automated 3-OS releases.
 | Android **companion** app | Full phased plan (backend LAN mode + pairing-code auth → transport shim → APK + CI → uploads) in [mobile.md](mobile.md). Phone drives the desktop over LAN: chat/devices/transfers while the desktop is on. APK published to Releases. |
 | iOS companion | Same plan in [mobile.md](mobile.md): CI compile-check now ($0), TestFlight when an Apple Developer account ($99/yr) exists. |
 | Code signing | SignPath OSS for Windows (see [code-signing.md](code-signing.md)); Apple Developer ID when budget allows (see [macos.md](macos.md)). |
-| Auto-update | electron-updater against GitHub Releases — after signing exists, so updates are verifiable. |
+| Auto-update | electron-updater against GitHub Releases — **shipped in v1.1.0**; cryptographically verified installs await code signing (SignPath). |
 
 ## 🔬 Later / exploring
 

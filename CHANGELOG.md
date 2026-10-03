@@ -18,7 +18,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   limits and an honest versioning policy
 - **Architecture decision records** (`docs/adr/`): loopback-by-default,
   frozen SAS/versioning, upload staging/resume
+- **Deterministic fuzz suite** (`backend/tests/t_fuzz`, 10 checks): seeded
+  garbage/structural/type-confusion WS frames, oversized frames, hostile
+  TCP length prefixes and non-handshake payloads — every case must end in a
+  sanitized `error` frame or a clean close, never a hang or a traceback;
+  suite total now 147 checks
 - Code of Conduct (Contributor Covenant 2.1)
+
+### Fixed
+
+- **WS bridge swallowed no-op `settings:apply`** (no reply at all) and
+  coerced non-bool `autoAccept` values (`bool("no")` is `True`) — now every
+  request is answered and field types are validated strictly
+- **WS bridge crashed on absurdly large JSON integers** (Python's
+  int-digit `ValueError` escaped the narrow `except`); the connection died
+  instead of returning `error: invalid JSON`
+- Broken GitHub README badge (shields has no `/attestations` endpoint)
+  now renders a valid SLSA-provenance badge linking to the real
+  attestation page; roadmap auto-update row corrected
+
+### Changed
+
+- `run_all.sh` counts a crashed suite as a failure instead of letting it
+  read as green
+- Dead `device:removed` WS case removed (mirrors undocumented reality;
+  see `docs/protocol.md` §6.5)
 
 ## [1.1.1] — 2026-10-03
 
