@@ -1,6 +1,6 @@
 import { memo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban, Clock, FolderOpen, Download, Loader2 } from 'lucide-react'
+import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban, Clock, FolderOpen, Download, Loader2, ListChecks } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Transfer } from '../../lib/types'
 import { IS_COMPANION } from '../../lib/bridge'
@@ -29,6 +29,9 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
   const addTransfer = useTransferStore((s) => s.addTransfer)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // Subset approval: pick which of the offered files to accept
+  const [pickOpen, setPickOpen] = useState(false)
+  const [picked, setPicked] = useState<Set<number>>(() => new Set())
 
   const isActive = transfer.status === 'transferring' || transfer.status === 'pending'
   const isAwaiting = transfer.status === 'awaiting'
@@ -77,11 +80,30 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
     })
   }
 
-  const handleApprove = async () => {
+  const handleApprove = async (files?: number[]) => {
+    if (files && files.length === 0) return
     if (window.electronAPI) {
-      await window.electronAPI.send({ type: 'transfer:approve', transferId: transfer.id })
+      await window.electronAPI.send({
+        type: 'transfer:approve',
+        transferId: transfer.id,
+        ...(files && files.length < transfer.files.length ? { files } : {}),
+      })
+      setPickOpen(false)
     }
   }
+
+  const openPick = () => {
+    setPicked(new Set(transfer.files.map((_, i) => i)))
+    setPickOpen(true)
+  }
+
+  const togglePick = (i: number) =>
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(i)) next.delete(i)
+      else next.add(i)
+      return next
+    })
 
   const handleDecline = async () => {
     if (window.electronAPI) {
@@ -151,16 +173,34 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
             <div className="flex items-center gap-1 ml-2">
               {isAwaiting && (
                 <>
+                  {transfer.files.length > 1 && !pickOpen && (
+                    <button
+                      onClick={openPick}
+                      aria-label="Choose files to accept"
+                      title="Choose files to accept"
+                      className="w-7 h-7 flex items-center justify-center rounded-lg text-frost-300 hover:bg-white/5 hover:text-frost-100 transition-colors"
+                    >
+                      <ListChecks size={12} />
+                    </button>
+                  )}
                   <button
-                    onClick={handleApprove}
+                    onClick={() => handleApprove(pickOpen ? [...picked] : undefined)}
+                    disabled={pickOpen && picked.size === 0}
                     aria-label="Accept transfer"
-                    title="Accept transfer"
-                    className="w-7 h-7 flex items-center justify-center rounded-lg text-green-400 hover:bg-green-500/10 transition-colors"
+                    title={
+                      pickOpen
+                        ? `Accept ${picked.size} of ${transfer.files.length} files`
+                        : 'Accept transfer'
+                    }
+                    className="w-7 h-7 flex items-center justify-center rounded-lg text-green-400 hover:bg-green-500/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
                   >
                     <Check size={12} />
                   </button>
                   <button
-                    onClick={handleDecline}
+                    onClick={() => {
+                      setPickOpen(false)
+                      handleDecline()
+                    }}
                     aria-label="Decline transfer"
                     title="Decline transfer"
                     className="w-7 h-7 flex items-center justify-center rounded-lg text-red-400 hover:bg-red-500/10 transition-colors"
@@ -211,6 +251,53 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
             </div>
           </div>
 
+          {isAwaiting && pickOpen && (
+            <div className="mb-2 rounded-xl bg-navy-700/40 border border-white/5 p-2">
+              <div className="flex items-center justify-between mb-1.5 px-1">
+                <span className="text-[11px] text-frost-400">
+                  Accept {picked.size} of {transfer.files.length} files
+                </span>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <button
+                    onClick={() => setPicked(new Set(transfer.files.map((_, i) => i)))}
+                    className="text-cyber-teal hover:underline"
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => setPicked(new Set())}
+                    className="text-frost-400 hover:underline"
+                  >
+                    None
+                  </button>
+                  <button
+                    onClick={() => setPickOpen(false)}
+                    className="text-frost-400 hover:underline"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+              <div className="max-h-32 overflow-y-auto space-y-0.5">
+                {transfer.files.map((f, i) => (
+                  <label
+                    key={i}
+                    className="flex items-center gap-2 px-1.5 py-1 rounded-lg hover:bg-white/5 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={picked.has(i)}
+                      onChange={() => togglePick(i)}
+                      className="accent-cyber-teal"
+                    />
+                    <span className="text-xs text-frost-200 truncate flex-1">{f.name}</span>
+                    <span className="text-[10px] text-frost-400 shrink-0">{formatBytes(f.size)}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           {isActive && (
             <div className="mb-2">
               <div className="h-1.5 bg-navy-700 rounded-full overflow-hidden">
@@ -235,6 +322,12 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
               <span>{transfer.files.length} files</span>
               <span>•</span>
               <span>{formatBytes(transfer.totalBytes)}</span>
+              {transfer.skipped ? (
+                <>
+                  <span>•</span>
+                  <span className="text-amber-400/80">{transfer.skipped} skipped</span>
+                </>
+              ) : null}
             </div>
           )}
 

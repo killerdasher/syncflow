@@ -29,6 +29,8 @@ export interface Transfer {
   verified?: boolean
   destPath?: string
   destFolder?: string
+  /** Receiver only: files skipped by a partial (subset) accept */
+  skipped?: number
 }
 
 export interface FileItem {

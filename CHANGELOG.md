@@ -3,6 +3,23 @@
 All notable changes to SyncFlow are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Device verification (SAS)**: 16-icon out-of-band fingerprint in
+  Settings → Pinned Devices → Verify — compare on both ends to rule out a
+  pairing-time man-in-the-middle; hex fingerprint fallback
+- **Subset approval**: accepting an incoming transfer can now pick which
+  files to take (checkbox list); only those are transferred, skipped files
+  are counted on the card
+- **Wire protocol specification** (`docs/protocol.md`): framing, discovery,
+  pairing/auth, exhaustive message catalogue, E2E flow, error catalogue,
+  limits and an honest versioning policy
+- **Architecture decision records** (`docs/adr/`): loopback-by-default,
+  frozen SAS/versioning, upload staging/resume
+- Code of Conduct (Contributor Covenant 2.1)
+
 ## [1.1.1] — 2026-10-03
 
 ### Added

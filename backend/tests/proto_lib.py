@@ -326,7 +326,15 @@ def send_transfer(
             return res
 
         signer = chunk_signer_identity or identity
-        for i, f in enumerate(files):
+        # Subset approval (mirror of engine.py): the receiver named the
+        # indexes it accepted — send exactly those, keeping the original
+        # index for declared_sizes/tamper hooks.
+        order = list(range(len(files)))
+        sel = decision.get("files")
+        if isinstance(sel, list) and sel:
+            order = sorted(sel)
+        for i in order:
+            f = files[i]
             res.stage = f"file{i}"
             path = f["path"]
             size = os.path.getsize(path)

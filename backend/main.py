@@ -266,8 +266,23 @@ class SyncFlowBackend:
         if not isinstance(transfer_id, str) or not TRANSFER_ID_RE.match(transfer_id):
             return {"type": "error", "error": "Invalid transfer id"}
         approve = data.get("type") == "transfer:approve"
-        handler = self.transfer_engine.approve_transfer if approve else self.transfer_engine.decline_transfer
-        success = handler(transfer_id)
+        files_sel = data.get("files")
+        if approve and files_sel is not None:
+            # Subset approval: non-empty, <=1000 unique non-negative ints.
+            # (Range vs the declared file count is checked by the engine,
+            # which is the only side that knows it at decision time.)
+            if (
+                not isinstance(files_sel, list)
+                or not files_sel
+                or len(files_sel) > 1000
+                or any(not isinstance(i, int) or isinstance(i, bool) or i < 0 for i in files_sel)
+                or len(set(files_sel)) != len(files_sel)
+            ):
+                return {"type": "error", "error": "Invalid file selection"}
+        if approve:
+            success = self.transfer_engine.approve_transfer(transfer_id, files_sel)
+        else:
+            success = self.transfer_engine.decline_transfer(transfer_id)
         return {
             "type": "transfer:decision",
             "transferId": transfer_id,

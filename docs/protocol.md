@@ -2,7 +2,7 @@
 
 **Status:** descriptive — this document records what the code actually does
 (as of v1.1.1), verified against the source and enforced by the
-134-check test suite. Constants live in code; where this document and the
+137-check test suite. Constants live in code; where this document and the
 code disagree, the code wins and this document is the bug.
 
 Audience: anyone implementing an interoperable client, auditing the
@@ -158,7 +158,7 @@ Facts:
 | `settings:apply {…}` | `settings:applied` \| `error` \| *(none)* | downloadPath must be `$HOME`-confined; `syncFolders` ≤50, home-confined |
 | `peers:list` | `peers:list {peers}` | pins as `{key, name, deviceId, firstSeen, lastSeen}` (`pub` stripped) |
 | `peers:forget {key}` | `peers:updated {key, success, peers}` \| `error` | drops a TOFU pin |
-| `transfer:approve {transferId}` | `transfer:decision {transferId, approved:true, success}` | resolves pending receiver approval |
+| `transfer:approve {transferId, files?}` | `transfer:decision {transferId, approved:true, success}` | resolves pending receiver approval; `files` = **subset approval**: non-empty list of unique non-negative ints (≤1000), else `error "Invalid file selection"`; range vs the declared file count is checked by the engine (out-of-range ⇒ the engine declines) |
 | `transfer:decline {transferId}` | `transfer:decision {…approved:false…}` | same handler |
 
 ### 6.2 Upload family (`UPLOAD_JSON_TYPES`)
@@ -298,7 +298,12 @@ Wire blob = `12-byte big-endian monotonic nonce ‖ ciphertext`
 2. **Receiver approval** (unless auto-accept): pending future, **60 s**
    timeout → `Timed out waiting for approval`; UI decision arrives as WS
    `transfer:approve`/`transfer:decline`. Encrypted decision frame:
-   `{status:"accepted"|"declined", reason?, error?}`.
+   `{status:"accepted"|"declined", files?, reason?, error?}` — when the
+   user picked a subset, `files` lists the accepted meta indexes and
+   **both sides narrow to exactly those**: the sender transmits only them,
+   the receiver filters its receive plan (task `files`/`totalBytes` narrow,
+   `skipped` counts the rest) and completion is checked against the
+   accepted byte count.
 3. Per file: encrypted `file_meta {name, size}`; then for each 64 KiB
    chunk **two** AEAD blobs — (a) a signed block header
    `{index, prev_hash, chunk_hash, file_name, chunk_size, sender_pubkey,
@@ -423,7 +428,8 @@ Current state, honestly:
 - Frozen-for-now: the SAS derivation (§10.4), the pairing code charset and
   TTL semantics, the E2E key schedule, and all framing caps above.
 
-Policy going forward (decision record, not yet enforced by code):
+Policy going forward (decision record: [ADR-0002](adr/0002-frozen-sas-and-versioning.md),
+not yet enforced by code):
 
 1. **Additive fields only** within a protocol generation — receivers must
    ignore unknown JSON keys and unknown `type`s.
@@ -452,7 +458,7 @@ Policy going forward (decision record, not yet enforced by code):
   discovered devices are untrusted until a transfer handshake + pin says
   otherwise.
 - Reported vulnerabilities: see [SECURITY.md](../SECURITY.md). Test evidence:
-  [security-audit.md](security-audit.md) (134 checks).
+  [security-audit.md](security-audit.md) (137 checks).
 
 ---
 

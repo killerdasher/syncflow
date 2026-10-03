@@ -1,6 +1,6 @@
 # SyncFlow Security Audit — 2026-10-03
 
-**Status:** complete, all findings sealed · **Suite:** 134/134 checks green on
+**Status:** complete, all findings sealed · **Suite:** 137/137 checks green on
 Ubuntu, Windows and macOS CI · **Dependencies:** `npm audit` 0 vulnerabilities,
 `pip-audit` 0 known vulnerabilities
 
@@ -26,7 +26,7 @@ run) + source review of every listening socket + dependency auditing.
 Environment: Parrot/Linux dev machine; CI replicates the suite on
 Ubuntu, Windows and macOS.
 
-## 2. Automated evidence (134 checks)
+## 2. Automated evidence (137 checks)
 
 `backend/tests/run_all.sh` boots two fresh instances (A: TCP 19974 / WS 18993,
 B: TCP 19975 / WS 18995) and runs eleven suites:
@@ -36,7 +36,7 @@ B: TCP 19975 / WS 18995) and runs eleven suites:
 | `t_net` | 7 | Declared-size frames enforced, invalid frames close cleanly, 1 MB transfer byte-identical, **zero plaintext on the wire** |
 | `t_proto` | 21 | Handshake state machine, replay/freshness rejection, malformed protocol input survives, framing bounds |
 | `mitm2` | 5 | Active proxy/MITM completes **without ever seeing filename or payload plaintext** |
-| `t_ws` | 22 | Origin allowlist, oversized/invalid frames, download-path confinement home-only, error hygiene |
+| `t_ws` | 25 | Origin allowlist, oversized/invalid frames, download-path confinement home-only, error hygiene; approval flows incl. **subset selection** (accept [0,2] of 3 → only those written, skipped count, verified), invalid selections rejected, out-of-range → engine declines |
 | `t_mdns_rogue` | 2 | Rogue mDNS id rejected; hostile TXT fields sanitized on store |
 | `t_extra` | 6 | Oversized WS message (code 1009) doesn't kill server; cancel leaves no temp files |
 | `t_attacks` | 8 | **Bind posture proven live** (loopback-only WS via `ss`; LAN-IP connect refused), TCP garbage leaks 0 bytes, 120 malformed msgs survive, field injection (peer key/shell meta/file list/transferId) rejected, state perms 0600/0700 |
@@ -113,7 +113,7 @@ mDNS TXT sanitization.
 ## 7. Reproduce
 
 ```bash
-backend/tests/run_all.sh            # 134 checks, fresh instances, ~5 min
+backend/tests/run_all.sh            # 137 checks, fresh instances, ~5 min
 backend/venv/bin/pip-audit -r backend/requirements.txt
 npm audit                           # 0 vulnerabilities
 npx tsc --noEmit                    # typecheck

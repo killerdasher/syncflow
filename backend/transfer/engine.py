@@ -92,6 +92,8 @@ class TransferTask:
         self.dest_folder: Optional[str] = None
         self.dest_dir: Optional[str] = None
         self.dest_paths: list[str] = []
+        # receiver: files skipped by a partial accept (subset approval)
+        self.skipped = 0
         self._last_emit = 0.0
         self._writer: Optional[asyncio.StreamWriter] = None
 
@@ -114,6 +116,8 @@ class TransferTask:
             # files (index-aligned with `files`); empty for sends, whose
             # source paths already live in files[i].path.
             "destPaths": list(self.dest_paths),
+            # receiver: count of files the user chose not to accept
+            "skipped": self.skipped,
         }
 
 
@@ -212,10 +216,13 @@ class TransferEngine:
     def set_chat_callback(self, callback: Callable):
         self._chat_callback = callback
 
-    def approve_transfer(self, transfer_id: str) -> bool:
+    def approve_transfer(self, transfer_id: str, files: Optional[list] = None) -> bool:
         fut = self._pending_approvals.get(transfer_id)
         if fut and not fut.done():
-            fut.set_result(True)
+            # Subset approval: the resolved value is either True (accept all)
+            # or the list of accepted file indexes (validated by the WS layer,
+            # range-checked again here before anything is framed).
+            fut.set_result(list(files) if files else True)
             return True
         return False
 
@@ -395,8 +402,28 @@ class TransferEngine:
                 task.status = "cancelled" if reason == "user" else "failed"
                 return
 
+            # Subset approval: receiver named the indexes it accepted.
+            # Shape was validated receiver-side before framing; anything
+            # malformed here is a protocol violation -> fail closed.
+            to_send = task.files
+            sel = decision.get("files")
+            if sel is not None:
+                valid = (
+                    isinstance(sel, list) and sel
+                    and all(isinstance(i, int) and not isinstance(i, bool) and i >= 0 for i in sel)
+                    and len(set(sel)) == len(sel)
+                    and max(sel) < len(task.files)
+                )
+                if not valid:
+                    task.status = "failed"
+                    task.error = "Invalid file selection"
+                    return
+                to_send = [task.files[i] for i in sorted(sel)]
+                task.skipped = len(task.files) - len(to_send)
+                task.total_bytes = sum(f.get("size", 0) for f in to_send)
+
             task.status = "transferring"
-            for file_info in task.files:
+            for file_info in to_send:
                 if task._cancelled:
                     break
                 await self._send_file(reader, writer, file_info, task, session)
@@ -640,8 +667,18 @@ class TransferEngine:
             task._writer = writer
             self.active_transfers[task.id] = task
 
+            selected: Optional[list] = None
             if self.require_approval:
                 decision = await self._request_approval(task)
+                if isinstance(decision, list):
+                    # Defence in depth: WS validated shape (non-empty, ints,
+                    # unique, >= 0); range can only be checked against the
+                    # declared file count, which only we know.
+                    if decision and len(set(decision)) == len(decision) and max(decision) < len(files):
+                        selected = sorted(decision)
+                        decision = True
+                    else:
+                        decision = "declined"
                 if decision is not True:
                     if decision == "timeout":
                         task.status = "failed"
@@ -669,10 +706,22 @@ class TransferEngine:
                     task.end_time = time.time()
                     return
 
+            accept_frame = {"status": "accepted"}
+            if selected is not None:
+                accept_frame["files"] = selected
             await self._write_enc(
-                writer, session, {"status": "accepted"}, HDR_TIMEOUT, MAX_META_BLOB
+                writer, session, accept_frame, HDR_TIMEOUT, MAX_META_BLOB
             )
             task.status = "transferring"
+
+            if selected is not None and len(selected) < len(files):
+                # Partial accept: the sender transmits exactly these indexes,
+                # so task bookkeeping (files, totals, destPaths alignment)
+                # narrows to the accepted set.
+                task.skipped = len(files) - len(selected)
+                files = [files[i] for i in selected]
+                task.files = files
+                task.total_bytes = sum(f.get("size", 0) for f in files)
 
             all_verified = True
             for expected in files:

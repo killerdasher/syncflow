@@ -1,7 +1,7 @@
 """WebSocket / application suite against live A (WS 18973) + B (WS 18975).
 
-22 checks: origin policy, malformed input, input validation, chat safety,
-mDNS relay, approval flows (accept/decline/cancel) and liveness.
+25 checks: origin policy, malformed input, input validation, chat safety,
+mDNS relay, approval flows (accept/decline/cancel/subset) and liveness.
 """
 import asyncio
 import os
@@ -21,11 +21,17 @@ def setup():
     write_file(SRC_W10, b"w10 accepted payload")
     write_file(SRC_W11, b"w11 declined payload")
     write_file(SRC_W12, os.urandom(64 * 1024))
+    write_file(SRC_W16[0], b"w16 file A payload")
+    write_file(SRC_W16[1], os.urandom(1024))
+    write_file(SRC_W16[2], b"w16 file C payload")
+    write_file(SRC_W18, b"w18 single payload")
 
 
 SRC_W10 = f"{ART}/w10-accept.bin"
 SRC_W11 = f"{ART}/w11-decline.bin"
 SRC_W12 = f"{ART}/w12-cancel.bin"
+SRC_W16 = [f"{ART}/w16-a.bin", f"{ART}/w16-b.bin", f"{ART}/w16-c.bin"]
+SRC_W18 = f"{ART}/w18-range.bin"
 
 
 def w6_path_policy():
@@ -340,6 +346,115 @@ def w12_cancel_awaiting():
     asyncio.run(ws_settings(WS_A, autoAccept=True))
 
 
+def w16_approve_subset():
+    asyncio.run(ws_settings(WS_A, autoAccept=False))
+
+    box = {}
+
+    def run():
+        box["r"] = send_transfer(
+            [
+                {"path": SRC_W16[0], "wire": "w16-a.bin"},
+                {"path": SRC_W16[1], "wire": "w16-b.bin"},
+                {"path": SRC_W16[2], "wire": "w16-c.bin"},
+            ],
+            target_port=TCP_A,
+        )
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+
+    async def go():
+        async with WSConn(WS_A) as ws:
+            at = await wait_awaiting(ws, 15)
+            await ws.send({"type": "transfer:approve", "transferId": at["id"], "files": [0, 2]})
+            dec = await ws.wait("transfer:decision", 6)
+            return at, dec
+
+    at, dec = asyncio.run(go())
+    t.join(60)
+    r = box.get("r")
+
+    final = None
+    try:
+        data = asyncio.run(ws_call(WS_A, {"type": "transfers:list"}, {"transfers:update"}, timeout=5))
+        for entry in data.get("completed", []):
+            if entry.get("id") == at["id"]:
+                final = entry
+    except Exception:
+        pass
+
+    a_ok = os.path.exists(os.path.join(DEST_A, "w16-a.bin"))
+    b_missing = not os.path.exists(os.path.join(DEST_A, "w16-b.bin"))
+    c_ok = os.path.exists(os.path.join(DEST_A, "w16-c.bin"))
+    ok(
+        "W16 subset approval: accept [0,2] -> only A+C written, task verified+skipped",
+        dec.get("success") is True
+        and r is not None and r.outcome == "completed"
+        and a_ok and b_missing and c_ok
+        and final is not None and final.get("status") == "completed"
+        and final.get("verified") is True
+        and len(final.get("files", [])) == 2
+        and final.get("skipped") == 1,
+        f"dec={dec.get('success')} outcome={getattr(r, 'outcome', None)} "
+        f"a={a_ok} b={b_missing} c={c_ok} final={final and (final.get('status'), final.get('skipped'), len(final.get('files', [])))}",
+    )
+    asyncio.run(ws_settings(WS_A, autoAccept=True))
+
+
+def w17_invalid_selection():
+    bad_cases = [[], [0, "x"], [0, 0], [-1], [True], "nope", 5]
+
+    async def go():
+        out = []
+        for sel in bad_cases:
+            r = await ws_call(
+                WS_A,
+                {"type": "transfer:approve", "transferId": "nosuch123", "files": sel},
+                {"error", "transfer:decision"},
+                timeout=5,
+            )
+            out.append(r)
+        return out
+
+    results = asyncio.run(go())
+    bad = [
+        r for r in results
+        if not (r.get("type") == "error" and r.get("error") == "Invalid file selection")
+    ]
+    ok(
+        "W17 invalid file selections rejected (empty/dup/neg/bool/wrong-type)",
+        not bad and len(results) == len(bad_cases),
+        f"bad={bad}",
+    )
+
+
+def w18_out_of_range_selection():
+    asyncio.run(ws_settings(WS_A, autoAccept=False))
+    t, box = start_raw_send("w18-range.bin", SRC_W18)
+
+    async def go():
+        async with WSConn(WS_A) as ws:
+            at = await wait_awaiting(ws, 15)
+            await ws.send({"type": "transfer:approve", "transferId": at["id"], "files": [0, 99]})
+            dec = await ws.wait("transfer:decision", 6)
+            return at, dec
+
+    at, dec = asyncio.run(go())
+    t.join(60)
+    r = box.get("r")
+    dest = os.path.join(DEST_A, "w18-range.bin")
+    ok(
+        "W18 out-of-range selection: engine declines, no file written",
+        dec.get("success") is True
+        and r is not None and r.outcome == "declined"
+        and not os.path.exists(dest),
+        f"dec={dec.get('success')} outcome={getattr(r, 'outcome', None)} "
+        f"err={getattr(r, 'error', None)}",
+    )
+    asyncio.run(ws_settings(WS_A, autoAccept=True))
+
+
 def w0_alive():
     r = asyncio.run(ws_call(WS_A, {"type": "identity:get"}, {"identity:info"}, timeout=5))
     ok("W0 server alive after full WS suite", r.get("type") == "identity:info")
@@ -362,6 +477,9 @@ def main():
     w10_approve_accept()
     w11_approve_decline()
     w12_cancel_awaiting()
+    w16_approve_subset()
+    w17_invalid_selection()
+    w18_out_of_range_selection()
     w0_alive()
     finish("t_ws")
 

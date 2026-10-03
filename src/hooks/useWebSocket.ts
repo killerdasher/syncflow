@@ -180,6 +180,7 @@ export function useWebSocket() {
               ...(t.error ? { error: t.error } : {}),
               ...(t.verified != null ? { verified: t.verified } : {}),
               ...(destPaths.length ? { destPath: destPaths[destPaths.length - 1] } : {}),
+              ...(typeof t.skipped === 'number' && t.skipped > 0 ? { skipped: t.skipped } : {}),
             })
           }
           break
