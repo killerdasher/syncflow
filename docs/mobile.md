@@ -39,7 +39,7 @@ transport shim.
 - **Standalone Android** (phone runs the full protocol) remains a later
   large effort; companion validates demand first.
 
-## Phase 0 — Backend: LAN mode + pairing-code auth (prerequisite) — **LANDED 2026-10-03** (`SYNCFLOW_WS_HOST`, `backend/pairing.py`, `t_lan_auth` 23 checks, suite 102/102)
+## Phase 0 — Backend: LAN mode + pairing-code auth (prerequisite) — **LANDED 2026-10-03** (`SYNCFLOW_WS_HOST`, `backend/pairing.py`, `t_lan_auth` 23 checks, suite 124/124)
 
 All desktop-relevant; lands on `main` with tests.
 
@@ -51,7 +51,7 @@ All desktop-relevant; lands on `main` with tests.
 | Origin allowlist | Add Capacitor origins (`capacitor://localhost`, `https://localhost`, `http://localhost` served builds) — but origin is **not** the auth mechanism anymore; auth is code/token |
 | Templates to reuse | `backend/relay/server.py:19-57` already has token issue/verify (`auth` → `auth_ok`) — port that pattern |
 | Docs | Update `docs/networking.md` (table row for LAN mode), `SECURITY.md` threat model, README limitation bullet |
-| Tests | Extend the 102-check suite: happy pairing, wrong-code lockout, token replay, unauthenticated command rejection, LAN-vs-loopback bind, Capacitor origin acceptance, loopback default unchanged |
+| Tests | Extend the 124-check suite: happy pairing, wrong-code lockout, token replay, unauthenticated command rejection, LAN-vs-loopback bind, Capacitor origin acceptance, loopback default unchanged |
 
 Estimated: 1–2 working sessions. Risk: low — opt-in, defaults preserve
 today's behavior exactly.
@@ -59,7 +59,7 @@ today's behavior exactly.
 ## Phase 1 — Renderer transport shim — **LANDED 2026-10-03**
 (`src/lib/bridge.ts` shim + `ConnectScreen`, `build:web`/`dev:web`,
 CSP widened only in the web config, feature gating, and
-`scripts/test-bridge.mjs` — a 5-step live auth-flow test wired into CI plus
+`scripts/test-bridge.mjs` — an 8-step live auth/upload/download/QR test wired into CI plus
 a Chrome-headless render smoke of `dist-web`.)
 
 | Item | Detail |
@@ -74,7 +74,7 @@ a Chrome-headless render smoke of `dist-web`.)
 Estimated: 1–2 sessions. Verifiable in plain Chrome before any Android
 tooling exists (connect to a LAN-mode desktop).
 
-## Phase 2 — Android APK + CI release
+## Phase 2 — Android APK + CI release — **LANDED 2026-10-03**
 
 | Item | Detail |
 |------|--------|
@@ -83,27 +83,36 @@ tooling exists (connect to a LAN-mode desktop).
 | SDK floor | minSdk **26** (Android 8), target latest (35), `compileSdk` latest — covers ~97% of devices, modern TLS/webview |
 | Cleartext LAN | `ws://192.168.x.x` is cleartext → `android:usesCleartextTraffic="true"` scoped by a **network security config** allowing cleartext only to private LAN ranges (RFC1918) |
 | Permissions | `INTERNET` only. No storage permission — saves go through SAF/Storage Access Framework |
-| CI workflow | `.github/workflows/mobile.yml` (tag + manual): `ubuntu-latest`, Temurin JDK 17, Android SDK (preinstalled / `android-actions/setup-android`), `npm ci` → `build:web` → `npx cap sync android` → `gradlew assembleRelease` → upload `SyncFlow-<v>.apk` |
+| CI workflow | `.github/workflows/mobile.yml` (tag + manual): `ubuntu-latest`, Temurin JDK 21, Android SDK (preinstalled / `android-actions/setup-android`), `npm ci` → `build:web` → `npx cap sync android` → `gradlew assembleRelease` → upload `SyncFlow-<v>.apk` |
 | Signing | Generate an Android keystore once; store **base64 keystore + passwords as GitHub Actions secrets** (Encrypted secrets). Back up the keystore **outside** GitHub — losing it = cannot update the app. Alternative: publish unsigned/debug-signed APKs for v0.x and defer real signing (updates then require reinstall with same key — decide before first install in the wild) |
 | Distribution | **GitHub Releases first** (sideload: Settings → install unknown apps). Upload via `gh release upload`, add to `SHA256SUMS.txt`, extend the attestation step (`subject-path` already globs `release-files/**` — include the APK) |
 | Play Store (later, optional) | $25 one-time, AAB (`bundleRelease`), Play App Signing (upload key managed by Google), Privacy Policy URL + Data-safety form (LAN-only, no data collection — easy), store listing screenshots |
 | Device testing | Manual install on your phone (Parrot↔phone on same LAN); optional emulator screenshot job in CI later |
 
-Estimated: 1–2 sessions after Phase 1. External deps: none for sideload;
-$25 only if Play Store.
+Landed: `capacitor.config.ts` + committed `android/` (minSdk 26, cleartext
+network-security config, `allowBackup=false`), branded icons via
+`@capacitor/assets`, versionCode/versionName synced from `package.json`,
+release keystore (RSA-4096) generated → GH secrets + **local backup at
+`~/.local/syncflow-android-keystore/`** (back it up again off-machine!),
+`mobile.yml` builds signed `SyncFlow-<v>-android.apk` on `workflow_dispatch`
+and via `workflow_call` from `release.yml` — tag releases fold the APK into
+`release-files/` so SHA256SUMS + provenance cover it. Verified: APK artifact
+built in CI and its signing cert matches the release keystore.
+External deps: none for sideload; $25 only if Play Store.
 
-## Phase 3 — Phone-native features
+## Phase 3 — Phone-native features — **LANDED 2026-10-03 (upload + receive + QR connect + notifications)**
 
 | Item | Detail |
 |------|--------|
-| Phone→desktop upload | Chunked `transfer:upload` frames over the authenticated WS (backend reassembles to the transfer engine); progress + cancel in UI |
-| Desktop→phone receive | Backend pushes chunks; phone saves via Capacitor Filesystem + system share sheet |
-| Notifications | Foreground WS → local notifications while app is open. **No background push** (no FCM relay on a LAN-only desktop) — documented limitation, not hidden |
+| Phone→desktop upload | **LANDED** — `transfer:upload/end/finish` control frames + 256 KiB binary chunks over the authed WS (`backend/upload.py`), 8 GiB/file cap (`SYNCFLOW_MAX_UPLOAD_MB`), strict seq/size enforcement, per-connection sessions, staging under `$SYNCFLOW_HOME/staging` (0700) removed on finish/cancel/disconnect, hand-off to the engine → target peer. Renderer: `src/lib/upload.ts` streams picked `File` blobs with socket backpressure; card progress via `transfer:progress`; cancel reuses `command:cancel`. Proven by `t_upload` (12 checks) + bridge-test step 6 (sha256 round trip). **Known gap:** no resume-after-interrupt (re-send the file). |
+| Desktop→phone receive | **LANDED** — `transfer:download{transferId,fileIndex}` → `ready` → 256 KiB binary frames → `file-done{received,sha256}` (`backend/download.py`); paths resolved **server-side** from the engine task table (client never sends a path), one stream per connection AND per transfer, per-2 MB loop yields so cancel/detach stay responsive, `command:cancel` fallback. Renderer: `src/lib/download.ts` reassembles + verifies counts/sha, saves via Capacitor Filesystem cache + **system share sheet** (native) or anchor download (web); `TransferCard` shows a companion-only **Save to device** button; `transfers:update` history sync seeds the list on connect. Proven by `t_download` (10 checks) + bridge-test step 7 (sha256 round trip). |
+| QR connect | **LANDED** — three paths: (1) in-app camera scan (ML Kit, `Scan QR` on ConnectScreen → `syncflow://pair` payload), (2) system-camera deep link (`syncflow` scheme intent in the Android manifest / iOS URL type → `appUrlOpen` → auto-pair), (3) manual entry. Parser `src/lib/qr.ts` rejects foreign schemes/hostile hosts (bridge-test step 8). |
+| Notifications | **LANDED (foreground)** — ConnectScreen requests permission inside the connect gesture; native builds schedule OS local notifications via `@capacitor/local-notifications` (Android WebView has no Web Notification API), tap maps to navigation. **No background push** (no FCM relay on a LAN-only desktop) — documented limitation, not hidden |
 | Chat / devices / transfers / settings peers | Already work through the Phase 1 shim |
 
-Estimated: 2–3 sessions (chunking + resume is the bulk).
+Remaining (optional): resume-after-interrupt for uploads; Play-Store distribution. Estimated for those: 1–2 sessions.
 
-## Phase 4 — iOS
+## Phase 4 — iOS — **Path A LANDED 2026-10-03** (compile-check only; Path B awaits the $99 Apple Developer account)
 
 **Predicted prerequisites (the real blocker):**
 
@@ -113,8 +122,8 @@ Estimated: 2–3 sessions (chunking + resume is the bulk).
 | Mac | $0 if using GitHub `macos-*` runners | Xcode preinstalled; `cap add ios` + `xcodebuild` run there; `ios/` project committed from CI |
 | Certs in CI | $0 | Distribution cert (.p12) + provisioning profile as secrets; App Store Connect API key for upload |
 
-**Path A (now, $0):** CI job on `macos-latest` builds the iOS project and a
-simulator `.app` on every main push — keeps the iOS target compiling, no
+**Path A (now, $0):** ✅ `.github/workflows/ios.yml` — CI job on `macos-latest` builds the iOS project and a
+simulator `.app` on every main push (shared `App` scheme committed; SPM template ships no workspace, so CI builds `-project App.xcodeproj`) — keeps the iOS target compiling, no
 signing. Release artifacts: none yet. This is "iOS is building" honesty,
 not a shippable app.
 

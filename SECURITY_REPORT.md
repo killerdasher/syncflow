@@ -194,7 +194,7 @@ six suites, tears down, exits non-zero on any failure).
 1. **Out-of-band key verification** — show a short fingerprint/QR per device and mark connections "verified" to close the first-contact gap.
 2. **Sign mDNS records** with the Ed25519 key (or challenge-response on connect) so discovery itself is authenticated; today discovery informs, the handshake proves.
 3. **Release signing** — GPG/SSH-sign AppImage & deb, add update-artifact signatures.
-4. **CI security gate** — *(implemented)* GitHub Actions workflow (`.github/workflows/ci.yml`) runs `backend/tests/run_all.sh` (all 102 checks, fresh instances, non-zero exit on failure) plus `tsc --noEmit` on every change.
+4. **CI security gate** — *(implemented)* GitHub Actions workflow (`.github/workflows/ci.yml`) runs `backend/tests/run_all.sh` (all 114 checks, fresh instances, non-zero exit on failure) plus `tsc --noEmit` on every change.
 5. **Fuzz the frame parser** (header length, JSON, decrypt-failure paths) with a coverage-guided fuzzer.
 6. **Per-IP handshake rate limiting** on the TCP port (chat is limited; handshake floods rely on the global cap today).
 7. **Received-file hygiene** — strip executable bits, optional AV scan hook, quarantine folder before user approval of open/save.
@@ -212,7 +212,7 @@ One command runs everything (starts fresh A+B instances on test ports,
 runs all six suites, tears down, prints totals, exit 0 = green):
 
 ```bash
-backend/tests/run_all.sh          # 102 checks, ~5 min
+backend/tests/run_all.sh          # 114 checks, ~5 min
 ```
 
 Individual suites (instances must already be running):

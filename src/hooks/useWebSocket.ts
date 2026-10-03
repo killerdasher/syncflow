@@ -1,4 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { LocalNotifications } from '@capacitor/local-notifications'
 import { useDeviceStore } from '../stores/deviceStore'
 import { useTransferStore } from '../stores/transferStore'
 import { useChatStore } from '../stores/chatStore'
@@ -7,7 +9,35 @@ import { usePeerStore } from '../stores/peerStore'
 import { useSettingsStore, applySettings } from '../stores/settingsStore'
 import type { ChatMessage, Transfer } from '../lib/types'
 
+// Phase 3 notifications: the web Notification API does not exist inside
+// Android WebView, so the companion schedules OS local notifications and
+// maps taps back to the same navigation the desktop does with clicks.
+const pendingNotifActions = new Map<number, () => void>()
+let nextNotifId = 1
+let notifListenerReady = false
+
+function ensureNotifListener(): void {
+  if (notifListenerReady) return
+  notifListenerReady = true
+  void LocalNotifications.addListener('localNotificationActionPerformed', (ev) => {
+    pendingNotifActions.get(ev.notification.id)?.()
+  }).catch(() => undefined)
+}
+
 function notify(title: string, body: string, onClick: () => void) {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      ensureNotifListener()
+      const id = nextNotifId++ % 2147483647 || 1
+      pendingNotifActions.set(id, onClick)
+      void LocalNotifications.schedule({
+        notifications: [{ id, title, body, extra: { page: '1' } }],
+      }).catch(() => undefined)
+      return
+    } catch {
+      /* best-effort */
+    }
+  }
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
   try {
     const n = new Notification(title, { body, silent: false })
@@ -129,6 +159,30 @@ export function useWebSocket() {
         case 'transfer:new':
           addTransfer({ ...(msg.transfer || {}), id: msg.transfer?.id || `tr-${Date.now()}` })
           break
+        case 'transfers:update':
+          // History sync (asked on connect): seed/refresh the mirrored list
+          // so a companion that just paired can save already-completed files.
+          for (const t of [...(msg.active || []), ...(msg.completed || [])]) {
+            if (!t || typeof t.id !== 'string') continue
+            const destPaths = Array.isArray(t.destPaths) ? t.destPaths : []
+            addTransfer({
+              id: t.id,
+              fromDevice: t.fromDevice || 'Unknown device',
+              toDevice: t.toDevice || 'This Device',
+              files: Array.isArray(t.files) ? t.files : [],
+              status: t.status || 'pending',
+              progress: typeof t.progress === 'number' ? t.progress : 0,
+              speed: t.speed || 0,
+              bytesTransferred: t.bytesTransferred || 0,
+              totalBytes: t.totalBytes || 0,
+              startTime: t.startTime || Date.now(),
+              ...(t.endTime ? { endTime: t.endTime } : {}),
+              ...(t.error ? { error: t.error } : {}),
+              ...(t.verified != null ? { verified: t.verified } : {}),
+              ...(destPaths.length ? { destPath: destPaths[destPaths.length - 1] } : {}),
+            })
+          }
+          break
         case 'error':
           // Backend validation/refusal replies — fail the matching transfer so
           // it can't sit in "pending" forever (e.g. invalid target device id)
@@ -216,6 +270,7 @@ export function useWebSocket() {
     window.electronAPI.send({ type: 'identity:get' })
     window.electronAPI.send({ type: 'devices:list' })
     window.electronAPI.send({ type: 'peers:list' })
+    window.electronAPI.send({ type: 'transfers:list' })
     applySettings()
 
     return () => {

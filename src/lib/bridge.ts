@@ -32,9 +32,11 @@ const QUEUE_CAP = 500
 
 type Listener = (msg: any) => void
 type StatusListener = (s: { connected: boolean }) => void
+type BinaryListener = (data: ArrayBuffer) => void
 
 const messageListeners = new Set<Listener>()
 const statusListeners = new Set<StatusListener>()
+const binaryListeners = new Set<BinaryListener>()
 const queue: any[] = []
 
 let ws: WebSocket | null = null
@@ -154,6 +156,10 @@ function connect(pendingCode?: string): void {
     return
   }
   ws = socket
+  // Phase 3 receive: binary frames are desktop->phone file payload —
+  // deliver them as ArrayBuffer to onBridgeBinary listeners instead of
+  // stringifying them into the JSON path below.
+  socket.binaryType = 'arraybuffer'
   socket.onopen = () => {
     if (ws !== socket) return // replaced by a newer connect() — ignore
     // The handshake payload is sent straight from the open event (no
@@ -172,6 +178,16 @@ function connect(pendingCode?: string): void {
     if (handshake) resolveHandshake('need_code')
   }
   socket.onmessage = (e) => {
+    if (e.data instanceof ArrayBuffer) {
+      binaryListeners.forEach((cb) => {
+        try {
+          cb(e.data)
+        } catch {
+          /* one bad listener must not break the stream */
+        }
+      })
+      return
+    }
     try {
       onServerMessage(JSON.parse(String(e.data)))
     } catch {
@@ -225,6 +241,95 @@ export function connectCompanion(host: string, code?: string): Promise<string> {
     }
     connect(code ? code.trim().toUpperCase() : undefined)
   })
+}
+
+/**
+ * Phase 3 upload plumbing: raw binary frames for file payload plus a
+ * one-shot request/response waiter for the JSON control frames. These are
+ * module-level (not on the electronAPI shim) because only the companion
+ * streams uploads — Electron sends real desktop paths instead.
+ */
+export function sendBridgeBinary(data: ArrayBuffer): boolean {
+  if (!authed || !ws || ws.readyState !== WebSocket.OPEN) return false
+  try {
+    ws.send(data)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Bytes still queued in the socket's outbound buffer (backpressure). */
+export function bridgeBuffered(): number {
+  return ws && ws.readyState === WebSocket.OPEN ? ws.bufferedAmount : 0
+}
+
+/**
+ * Subscribe to binary frames (Phase 3 desktop->phone download payload).
+ * Returns an unsubscribe function; listeners are attach-before-send safe.
+ */
+export function onBridgeBinary(cb: BinaryListener): () => void {
+  binaryListeners.add(cb)
+  return () => {
+    binaryListeners.delete(cb)
+  }
+}
+
+interface BridgeWaiter {
+  promise: Promise<any | null>
+  cancel: () => void
+}
+
+/**
+ * Like waitForBridgeMessage but with an explicit cancel — callers that
+ * abandon one of two pre-attached waiters (download handshake) must call
+ * `cancel()` so the listener and timer do not leak until timeout.
+ */
+export function createBridgeWaiter(
+  pred: (msg: any) => boolean,
+  timeoutMs = 20000
+): BridgeWaiter {
+  let listener: Listener | null = null
+  let timer: number | null = null
+  let settled = false
+  let resolveFn: (v: any | null) => void = () => {}
+  const promise = new Promise<any | null>((resolve) => {
+    resolveFn = resolve
+    listener = (msg) => {
+      if (!pred(msg)) return
+      cleanup()
+      resolve(msg)
+    }
+    timer = window.setTimeout(() => {
+      cleanup()
+      resolve(null)
+    }, timeoutMs)
+    messageListeners.add(listener)
+  })
+  const cleanup = () => {
+    if (settled) return
+    settled = true
+    if (listener) messageListeners.delete(listener)
+    if (timer !== null) {
+      window.clearTimeout(timer)
+      timer = null
+    }
+  }
+  return {
+    promise,
+    cancel: () => {
+      cleanup()
+      resolveFn(null)
+    },
+  }
+}
+
+/** Resolve with the first frame matching `pred`, or null on timeout. */
+export function waitForBridgeMessage(
+  pred: (msg: any) => boolean,
+  timeoutMs = 20000
+): Promise<any | null> {
+  return createBridgeWaiter(pred, timeoutMs).promise
 }
 
 /** Assign the shim onto `window.electronAPI` (companion mode only). */
