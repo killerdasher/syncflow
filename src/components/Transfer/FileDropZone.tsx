@@ -116,9 +116,9 @@ export function FileDropZone({ onFilesSelected }: FileDropZoneProps) {
                 className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-white/5"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <FileUp size={14} className="text-cyber-teal flex-shrink-0" />
+                  <FileUp size={14} className="text-cyber-teal shrink-0" />
                   <span className="text-xs text-frost-200 truncate">{file.name}</span>
-                  <span className="text-[10px] text-frost-400 flex-shrink-0">{formatBytes(file.size)}</span>
+                  <span className="text-[10px] text-frost-400 shrink-0">{formatBytes(file.size)}</span>
                 </div>
                 <button
                   onClick={() => removeFile(index)}

@@ -215,7 +215,7 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
             <div className="mb-2">
               <div className="h-1.5 bg-navy-700 rounded-full overflow-hidden">
                 <motion.div
-                  className="h-full bg-gradient-to-r from-cyber-teal to-cyber-blue rounded-full"
+                  className="h-full bg-linear-to-r from-cyber-teal to-cyber-blue rounded-full"
                   initial={{ width: 0 }}
                   animate={{ width: `${transfer.progress * 100}%` }}
                   transition={{ duration: 0.5, ease: 'easeOut' }}

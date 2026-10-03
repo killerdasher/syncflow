@@ -72,7 +72,7 @@ export function PairingCard() {
             <img
               src={pairing.qr}
               alt="Pairing QR code"
-              className="w-32 h-32 rounded-lg bg-white p-2 flex-shrink-0"
+              className="w-32 h-32 rounded-lg bg-white p-2 shrink-0"
             />
           )}
         </div>
