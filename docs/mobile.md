@@ -67,7 +67,7 @@ a Chrome-headless render smoke of `dist-web`.)
 | `src/lib/bridge.ts` | When `!window.electronAPI`: construct a compatible object (`send`, `onMessage`, `onStatus`, `window.*` no-ops) over one raw WS |
 | First-run connect screen | Enter `ws://192.168.x.x:18973` + pairing code; persist address/token in `localStorage` |
 | `build:web` script | Plain renderer build (electron-vite already builds the renderer from repo root — verify output path, add `vite build` fallback if needed) |
-| CSP | Widen `connect-src` for mobile builds (`ws://*` guarded by build-time flag, or Capacitor-only `index.html`) |
+| CSP | Widen `connect-src` for mobile builds (`ws://*:*` — ports must be explicit, a bare `ws://*` matches only port 80 in Chromium — guarded by build-time flag, or Capacitor-only `index.html`) |
 | Feature gating | Detect companion mode → hide TitleBar, Sync-Folders, Storage-`open`, Settings `openDirectory`; chat/transfers/dashboard/settings peers work as-is |
 | File send | Companion **cannot** pass desktop paths (backend rejects non-existent files, `backend/main.py:131-137`). Phone→desktop uploads land in Phase 3 as chunked `transfer:upload` |
 
