@@ -135,7 +135,7 @@ export function ChatPage() {
                     <Hash size={9} className="text-frost-400" />
                   )}
                 </div>
-                <p className="text-sm text-frost-100 leading-relaxed break-words">
+                <p className="text-sm text-frost-100 leading-relaxed wrap-break-word">
                   {msg.text}
                 </p>
                 {msg.hash === 'pending' ? (

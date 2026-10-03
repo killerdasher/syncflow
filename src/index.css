@@ -1,6 +1,86 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+/*
+ * Tailwind 4 theme (migrated from tailwind.config.js — the JS config is
+ * gone; content detection is automatic). Custom colors/shadows/animation
+ * keep their v3 class names: bg-navy-900, shadow-glow, animate-pulse-slow…
+ */
+@theme {
+  --color-navy-900: #0a1628;
+  --color-navy-800: #0d1f35;
+  --color-navy-700: #132d45;
+  --color-navy-600: #1a3a5c;
+
+  --color-aqua-900: #0d2b3e;
+  --color-aqua-800: #123a52;
+  --color-aqua-700: #1a4d6b;
+  --color-aqua-600: #1e6080;
+
+  --color-cyber-teal: #00d4aa;
+  --color-cyber-blue: #3b82f6;
+  --color-cyber-glow: rgba(0, 212, 170, 0.2);
+
+  --color-frost-100: #e2e8f0;
+  --color-frost-200: #cbd5e1;
+  --color-frost-300: #94a3b8;
+  --color-frost-400: #64748b;
+
+  --shadow-glow: 0 0 20px rgba(0, 212, 170, 0.15);
+  --shadow-glow-lg: 0 0 40px rgba(0, 212, 170, 0.2);
+  --shadow-glow-blue: 0 0 20px rgba(59, 130, 246, 0.15);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.3);
+
+  --backdrop-blur-glass: 16px;
+
+  --animate-pulse-slow: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-glow: glow 2s ease-in-out infinite alternate;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-wave: wave 6s ease-in-out infinite;
+  --animate-spin-slow: spin-slow 3s linear infinite;
+
+  @keyframes pulse-slow {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+  @keyframes glow {
+    0% {
+      box-shadow: 0 0 5px rgba(0, 212, 170, 0.1);
+    }
+    100% {
+      box-shadow: 0 0 25px rgba(0, 212, 170, 0.3);
+    }
+  }
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+  @keyframes wave {
+    0% {
+      transform: scaleX(0);
+    }
+    50% {
+      transform: scaleX(1);
+    }
+    100% {
+      transform: scaleX(0);
+    }
+  }
+  @keyframes spin-slow {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+}
 
 @layer base {
   * {

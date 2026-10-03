@@ -99,7 +99,7 @@ export function DevicePickerModal({ files, devices, onSend, onAddDevice, onClose
                       <p className="text-sm font-medium text-frost-100 truncate">{device.name}</p>
                       <p className="text-xs text-frost-400 font-mono">{device.ip}</p>
                     </div>
-                    <Send size={14} className="text-cyber-teal flex-shrink-0" />
+                    <Send size={14} className="text-cyber-teal shrink-0" />
                   </motion.button>
                 ))}
                 <button

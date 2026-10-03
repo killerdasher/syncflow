@@ -83,7 +83,7 @@ export function SettingsPage() {
       </div>
 
       <div className="flex gap-4">
-        <div className="w-48 flex-shrink-0">
+        <div className="w-48 shrink-0">
           <nav className="flex flex-col gap-1">
             {tabs.map((tab) => (
               <button
@@ -259,7 +259,7 @@ export function SettingsPage() {
                           </div>
                           <button
                             onClick={() => handleForget(peer.key)}
-                            className="flex items-center gap-1 text-xs text-frost-400 hover:text-red-400 transition-colors flex-shrink-0 ml-3"
+                            className="flex items-center gap-1 text-xs text-frost-400 hover:text-red-400 transition-colors shrink-0 ml-3"
                           >
                             <Trash2 size={12} />
                             Forget
