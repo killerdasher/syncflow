@@ -201,7 +201,6 @@ def handshake_client(s, identity, record=None, backdate=None, tamper_sig=False, 
     server->client accept frame (for leak checks).
     """
     offer, session = handshake_offer(identity)
-    offer["security"] = "e2e-blockchain-v1"
     if backdate:
         offer["timestamp"] -= backdate
     if tamper_sig:

@@ -176,6 +176,14 @@ class SessionCrypto:
 
 FRESHNESS_WINDOW = 300.0  # seconds — handshakes older than this are rejected
 
+# Protocol security suite(s) this build understands. The handshake `security`
+# token is validated on receipt (ADR-0002 decision 3): an unknown or missing
+# suite is refused instead of silently proceeding. The field itself is not
+# inside the signed material, so it cannot steer suite *selection* — refusal
+# is fail-closed and suite behaviour is fixed in code.
+SUPPORTED_SECURITY = ("e2e-blockchain-v1",)
+DEFAULT_SECURITY = "e2e-blockchain-v1"
+
 
 def _signed_material(signing_pub: str, ephemeral_pub: str, timestamp) -> bytes:
     return f"{signing_pub}:{ephemeral_pub}:{timestamp}".encode()
@@ -186,6 +194,7 @@ def handshake_offer(identity: DeviceIdentityKeys) -> tuple[dict, SessionCrypto]:
     ts = time.time()
     offer = {
         "type": "e2e_offer",
+        "security": DEFAULT_SECURITY,
         "signingPub": identity.signing_pub_b64,
         "ephemeralPub": session.ephemeral_pub_b64,
         "timestamp": ts,
@@ -197,7 +206,12 @@ def handshake_offer(identity: DeviceIdentityKeys) -> tuple[dict, SessionCrypto]:
 
 
 def handshake_accept(identity: DeviceIdentityKeys, offer: dict) -> tuple[dict, SessionCrypto]:
-    """Verify the offer (signature + freshness) BEFORE deriving any key."""
+    """Verify the offer (security suite + signature + freshness) BEFORE keys."""
+    sec = offer.get("security")
+    if sec is None:
+        raise ValueError("offer missing security suite")
+    if sec not in SUPPORTED_SECURITY:
+        raise ValueError(f"unsupported security suite: {str(sec)[:64]}")
     signing_pub = str(offer.get("signingPub", ""))
     ephemeral_pub = str(offer.get("ephemeralPub", ""))
     ts = offer.get("timestamp")
@@ -220,6 +234,7 @@ def handshake_accept(identity: DeviceIdentityKeys, offer: dict) -> tuple[dict, S
         "signature": identity.sign(header.encode()),
         "peerSigningPub": signing_pub,
         "timestamp": ts2,
+        "security": DEFAULT_SECURITY,
     }
     return response, session
 
@@ -230,7 +245,10 @@ def handshake_complete(
     session: SessionCrypto,
     initiator: bool = True,
 ) -> bool:
-    """Verify the response signature + freshness BEFORE deriving keys."""
+    """Verify the response suite + signature + freshness BEFORE deriving keys."""
+    sec = response.get("security")
+    if sec is not None and sec not in SUPPORTED_SECURITY:
+        raise ValueError(f"unsupported security suite: {str(sec)[:64]}")
     signing_pub = str(response.get("signingPub", ""))
     ephemeral_pub = str(response.get("ephemeralPub", ""))
     ts = response.get("timestamp")

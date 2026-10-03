@@ -34,6 +34,15 @@ def _san(value, limit: int = 200) -> str:
     return "".join(ch for ch in text if ch.isprintable())[:limit]
 
 
+def _sentence(value, limit: int = 200) -> str:
+    """Human-facing errors are sentence-cased (protocol.md §11)."""
+    text = _san(value, limit)
+    for i, ch in enumerate(text):
+        if ch.isalpha():
+            return text[:i] + ch.upper() + text[i + 1:]
+    return text
+
+
 class WebSocketBridge:
     def __init__(self, port: int = 18973, host: Optional[str] = None):
         self.port = port
@@ -113,7 +122,7 @@ class WebSocketBridge:
                         # Downloading is read-only: client binary frames are
                         # a protocol violation while a stream is pushing.
                         await self._safe_send(
-                            ws, {"type": "error", "error": "unexpected binary frame during download"},
+                            ws, {"type": "error", "error": "Unexpected binary frame during download"},
                         )
                     elif self.upload is not None:
                         await self.upload.on_chunk(ws, bytes(message))
@@ -126,15 +135,15 @@ class WebSocketBridge:
                 try:
                     data = json.loads(message)
                 except ValueError:
-                    await self._safe_send(ws, {"type": "error", "error": "invalid JSON"})
+                    await self._safe_send(ws, {"type": "error", "error": "Invalid JSON"})
                     continue
                 if not isinstance(data, dict):
-                    await self._safe_send(ws, {"type": "error", "error": "message must be an object"})
+                    await self._safe_send(ws, {"type": "error", "error": "Message must be an object"})
                     continue
 
                 msg_type = data.get("type", "")
                 if not isinstance(msg_type, str):
-                    await self._safe_send(ws, {"type": "error", "error": "invalid message type"})
+                    await self._safe_send(ws, {"type": "error", "error": "Invalid message type"})
                     continue
 
                 # Phase 0 gate: unauthenticated remote sockets may only pair
@@ -204,7 +213,7 @@ class WebSocketBridge:
                             await ws.send(json.dumps(response))
                     except Exception as e:
                         print(f"Handler error for {_san(msg_type, 64)}: {_san(e, 160)}", flush=True)
-                        await self._safe_send(ws, {"type": "error", "error": _san(e, 200)})
+                        await self._safe_send(ws, {"type": "error", "error": _sentence(e, 200)})
                     continue
 
                 # Phase 3 download control frames — same contract.
@@ -215,7 +224,7 @@ class WebSocketBridge:
                             await ws.send(json.dumps(response))
                     except Exception as e:
                         print(f"Handler error for {_san(msg_type, 64)}: {_san(e, 160)}", flush=True)
-                        await self._safe_send(ws, {"type": "error", "error": _san(e, 200)})
+                        await self._safe_send(ws, {"type": "error", "error": _sentence(e, 200)})
                     continue
 
                 handler = self._handlers.get(msg_type)
@@ -230,7 +239,7 @@ class WebSocketBridge:
                 except Exception as e:
                     # One bad request must not tear down the client session
                     print(f"Handler error for {_san(msg_type, 64)}: {_san(e, 160)}", flush=True)
-                    await self._safe_send(ws, {"type": "error", "error": _san(e, 200)})
+                    await self._safe_send(ws, {"type": "error", "error": _sentence(e, 200)})
         except Exception as e:
             print(f"Client error: {_san(e, 160)}", flush=True)
         finally:

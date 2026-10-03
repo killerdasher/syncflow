@@ -28,7 +28,7 @@ Requirements: Node 20+, Python 3.11+.
 
 ```bash
 npx tsc --noEmit          # typecheck (must be clean)
-backend/tests/run_all.sh  # security suite — 147 checks, ~6 min, must be green
+backend/tests/run_all.sh  # security suite — 152 checks, ~6 min, must be green
 ```
 
 ## Guidelines

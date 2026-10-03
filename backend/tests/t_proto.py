@@ -1,12 +1,13 @@
 """Protocol / crypto suite against live instance A (TCP 19974, WS 18973).
 
-20 checks covering verification, traversal, metadata attacks, replay,
+23 checks covering verification, traversal, metadata attacks, replay,
 identity binding, blockchain integrity and chat safety.
 """
 import asyncio
 import glob
 import json
 import os
+import re
 import sys
 import threading
 
@@ -327,7 +328,7 @@ def t19_chat_flood():
             if seen_limited:
                 monotonic = False
             oks += 1
-        elif ack.get("error") == "rate limited":
+        elif ack.get("error") == "Rate limited":
             seen_limited = True
             limited += 1
         else:
@@ -336,6 +337,65 @@ def t19_chat_flood():
         "T19 chat flood rate-limited (30 msgs/60s per IP), limit monotonic",
         1 <= oks <= 30 and limited >= 8 and monotonic and other == 0,
         f"ok={oks} limited={limited} other={other}",
+    )
+
+
+
+BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+PROTO_MD = os.path.abspath(os.path.join(BACKEND_DIR, "..", "docs", "protocol.md"))
+_SKIP_DIRS = {"tests", "venv", "__pycache__", "node_modules"}
+_ERR_LIT_RE = re.compile(r'"error": "([^"]+)"')
+
+
+def _static_error_literals() -> dict:
+    """Every static "error": "<literal>" in backend source (tests/venv skipped)."""
+    found: dict = {}
+    for root, dirs, files in os.walk(BACKEND_DIR):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(root, name)
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            for m in _ERR_LIT_RE.finditer(text):
+                found.setdefault(m.group(1), path)
+    return found
+
+
+def t24_error_vocabulary_casing():
+    """FD3 §21: every static error string is sentence-cased (auth directive exempt)."""
+    literals = _static_error_literals()
+    # Message-type directives keep their literal token ("pairing:generate",
+    # "pairing required: …"); everything else must be sentence-cased.
+    _exempt = ("pairing required:", "pairing:generate")
+    bad = sorted(
+        s for s in literals
+        if s and not s[0].isupper() and not s.startswith(_exempt)
+    )
+    ok(
+        "D1 error vocabulary: every static error literal is sentence-cased",
+        not bad, f"bad={bad}",
+    )
+
+
+def t25_error_catalogue_sync():
+    """protocol.md §11 must list every static error literal (code -> doc pin)."""
+    literals = _static_error_literals()
+    try:
+        with open(PROTO_MD, encoding="utf-8") as fh:
+            doc = fh.read()
+    except OSError:
+        doc = ""
+    sec = doc.split("## 11. Error frames", 1)
+    section = sec[1].split("## 12.", 1)[0] if len(sec) == 2 else ""
+    missing = sorted(s for s in literals if s not in section)
+    ok(
+        "D2 protocol.md §11 catalogue lists every static error literal",
+        not missing and bool(section), f"missing={missing}",
     )
 
 
@@ -360,6 +420,8 @@ def main():
     t23_non_string_chat()
     t22_chat_accepted()
     t19_chat_flood()
+    t24_error_vocabulary_casing()
+    t25_error_catalogue_sync()
     finish("t_proto")
 
 

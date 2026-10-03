@@ -22,7 +22,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   garbage/structural/type-confusion WS frames, oversized frames, hostile
   TCP length prefixes and non-handshake payloads — every case must end in a
   sanitized `error` frame or a clean close, never a hang or a traceback;
-  suite total now 147 checks
+  suite total now 152 checks
+- **Trust-change toast** (`security:identity-changed`): backend broadcasts
+  identity-mismatch events; frontend shows dismissible toast in the UI
+- **Protocol version negotiation**: handshake `security` token validated
+  (ADR-0002 decision 3); unknown/missing suite refused; legacy accept
+  tolerated per additive policy
+- **Error vocabulary pass**: all static `error` literals sentence-cased;
+  exhaustive catalogue in `protocol.md §11`; `t_proto` D1/D2 pins code↔doc sync
 - Code of Conduct (Contributor Covenant 2.1)
 
 ### Fixed

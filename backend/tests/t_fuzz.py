@@ -77,7 +77,7 @@ async def f1_garbage_text() -> list:
         for _ in range(ITER):
             await ws.ws.send(_rand_junk())
             kind, data = await recv_any(ws, 3.0)
-            if kind != "frame" or data.get("type") != "error" or data.get("error") != "invalid JSON":
+            if kind != "frame" or data.get("type") != "error" or data.get("error") != "Invalid JSON":
                 bad.append((kind, data))
                 if kind != "frame":
                     break  # connection died - nothing left to fuzz here
@@ -273,7 +273,7 @@ async def main():
 
     bad = await f1_garbage_text()
     ok(
-        f"F1 WS garbage text -> {ITER}x 'invalid JSON' errors, connection survives",
+        f"F1 WS garbage text -> {ITER}x 'Invalid JSON' errors, connection survives",
         not bad, f"bad={bad[:2]}",
     )
 

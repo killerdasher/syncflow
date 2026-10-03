@@ -16,6 +16,13 @@ export interface SasResult {
   hash: string
 }
 
+export interface SecurityToast {
+  id: number
+  key: string
+  reason: string
+  createdAt: number
+}
+
 interface AppState {
   backendConnected: boolean
   setBackendConnected: (connected: boolean) => void
@@ -34,6 +41,10 @@ interface AppState {
   /** Latest SAS derivation reply (identity:sas), null = none yet */
   sas: SasResult | null
   setSas: (s: SasResult | null) => void
+  /** Security toasts (identity change, etc.) */
+  securityToasts: SecurityToast[]
+  addSecurityToast: (key: string, reason: string) => void
+  dismissSecurityToast: (id: number) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -50,4 +61,16 @@ export const useAppStore = create<AppState>((set) => ({
   setCompanionAuthed: (v) => set({ companionAuthed: v }),
   sas: null,
   setSas: (s) => set({ sas: s }),
+  securityToasts: [],
+  addSecurityToast: (key, reason) =>
+    set((state) => ({
+      securityToasts: [
+        ...state.securityToasts,
+        { id: Date.now(), key, reason, createdAt: Date.now() },
+      ],
+    })),
+  dismissSecurityToast: (id) =>
+    set((state) => ({
+      securityToasts: state.securityToasts.filter((t) => t.id !== id),
+    })),
 }))

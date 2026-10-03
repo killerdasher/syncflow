@@ -160,6 +160,46 @@ def c6_key_persistence(tmp_root):
     shutil.rmtree(tmp_root, ignore_errors=True)
 
 
+def c7_security_suite(a, b):
+    """ADR-0002 decision 3: handshake security suite is validated, fail-closed."""
+    offer, sess_i = handshake_offer(a)
+
+    missing_ok = unknown_ok = False
+    missing = unknown = ""
+    try:
+        handshake_accept(b, {k: v for k, v in offer.items() if k != "security"})
+        missing = "accepted"
+    except ValueError as e:
+        missing_ok = "security" in str(e)
+        missing = str(e)[:60]
+    try:
+        handshake_accept(b, dict(offer, security="e2e-blockchain-v2"))
+        unknown = "accepted"
+    except ValueError as e:
+        unknown_ok = "unsupported security suite" in str(e)
+        unknown = str(e)[:60]
+    ok(
+        "C7a offer security suite validated (missing/unknown refused)",
+        missing_ok and unknown_ok, f"missing={missing!r} unknown={unknown!r}",
+    )
+
+    accept, _ = handshake_accept(b, offer)
+    bad_ok = False
+    bad = ""
+    try:
+        handshake_complete(a, dict(accept, security="e2e-blockchain-v2"), sess_i, initiator=True)
+        bad = "accepted"
+    except ValueError as e:
+        bad_ok = "unsupported security suite" in str(e)
+        bad = str(e)[:60]
+    ok("C7b unknown security suite in accept refused by initiator", bad_ok, bad)
+
+    legacy = dict(accept)
+    legacy.pop("security", None)
+    legacy_ok = handshake_complete(a, legacy, sess_i, initiator=True) is True
+    ok("C7c legacy accept without security still completes (additive policy)",
+       legacy_ok, f"legacy={legacy_ok}")
+
 if __name__ == "__main__":
     t = tempfile.mkdtemp(prefix="sfcrypto-main-")
     shutil.rmtree(t, ignore_errors=True)
@@ -168,6 +208,7 @@ if __name__ == "__main__":
     c3_ed25519(a, b)
     c4_full_handshake(a, b)
     c5_replay_rejected(a, b)
+    c7_security_suite(a, b)
     c6_key_persistence(tempfile.mkdtemp(prefix="sfcrypto-persist-"))
     print(f"RESULTS_JSON: {{\"suite\": \"t_crypto\", \"pass\": {PASS}, \"fail\": {FAIL}}}")
     sys.exit(0 if FAIL == 0 else 1)

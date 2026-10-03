@@ -1,6 +1,6 @@
 # SyncFlow Security Audit — 2026-10-03
 
-**Status:** complete, all findings sealed · **Suite:** 147/147 checks green on
+**Status:** complete, all findings sealed · **Suite:** 152/152 checks green on
 Ubuntu, Windows and macOS CI · **Dependencies:** `npm audit` 0 vulnerabilities,
 `pip-audit` 0 known vulnerabilities
 
@@ -26,7 +26,7 @@ run) + source review of every listening socket + dependency auditing.
 Environment: Parrot/Linux dev machine; CI replicates the suite on
 Ubuntu, Windows and macOS.
 
-## 2. Automated evidence (147 checks)
+## 2. Automated evidence (152 checks)
 
 `backend/tests/run_all.sh` boots two fresh instances (A: TCP 19974 / WS 18993,
 B: TCP 19975 / WS 18995) and runs twelve suites:
@@ -114,7 +114,7 @@ mDNS TXT sanitization.
 ## 7. Reproduce
 
 ```bash
-backend/tests/run_all.sh            # 147 checks, fresh instances, ~6 min
+backend/tests/run_all.sh            # 152 checks, fresh instances, ~6 min
 backend/venv/bin/pip-audit -r backend/requirements.txt
 npm audit                           # 0 vulnerabilities
 npx tsc --noEmit                    # typecheck

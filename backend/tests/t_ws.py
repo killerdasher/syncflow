@@ -103,7 +103,7 @@ def w3_bad_json():
     err, info = asyncio.run(go())
     ok(
         "W3 malformed JSON gets error, session survives",
-        err.get("error") == "invalid JSON" and info.get("type") == "identity:info",
+        err.get("error") == "Invalid JSON" and info.get("type") == "identity:info",
         f"err={err} info={info.get('type')}",
     )
 
@@ -120,7 +120,7 @@ def w4_non_dict():
     err, info = asyncio.run(go())
     ok(
         "W4 non-object message gets error, session survives",
-        err.get("error") == "message must be an object" and info.get("type") == "identity:info",
+        err.get("error") == "Message must be an object" and info.get("type") == "identity:info",
         f"err={err}",
     )
 

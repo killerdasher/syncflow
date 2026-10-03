@@ -14,7 +14,7 @@
   <a href="https://github.com/killerdasher/syncflow/actions/workflows/ci.yml"><img src="https://github.com/killerdasher/syncflow/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/killerdasher/syncflow/releases"><img src="https://img.shields.io/github/v/release/killerdasher/syncflow" alt="Release"></a>
   <a href="https://github.com/killerdasher/syncflow/releases"><img src="https://img.shields.io/github/downloads/killerdasher/syncflow/total" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/tests-147%20green-brightgreen" alt="Tests: 147 checks">
+  <img src="https://img.shields.io/badge/tests-152%20green-brightgreen" alt="Tests: 152 checks">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Android-0ea5e9" alt="Platform: Windows | Linux | macOS | Android">
   <a href="https://github.com/killerdasher/syncflow/attestations"><img src="https://img.shields.io/badge/build%20attestation-SLSA%20provenance-7c3aed" alt="Build attestations"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
@@ -104,7 +104,7 @@ SyncFlow/
 │   ├── networking/    # TCP server/client
 │   ├── crypto/        # E2E crypto (AES-GCM, Ed25519, X25519) + trust store
 │   ├── relay/         # Standalone relay module (not wired into the UI)
-│   └── tests/         # Security suite (run_all.sh, 147 checks)
+│   └── tests/         # Security suite (run_all.sh, 152 checks)
 ├── build/             # App icons
 └── docs/              # Setup, networking, signing, roadmap, mobile plan
 ```
@@ -170,7 +170,7 @@ opens a **draft** GitHub Release for review.
 ## Tests
 
 ```bash
-backend/tests/run_all.sh    # 147 checks against fresh live instances, ~6 min
+backend/tests/run_all.sh    # 152 checks against fresh live instances, ~6 min
 npx tsc --noEmit            # typecheck
 python backend/tests/smoke_windows.py   # portable backend smoke (any OS)
 ```

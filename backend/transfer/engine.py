@@ -43,6 +43,15 @@ def san(value, limit: int = 512) -> str:
     return "".join(ch for ch in text if ch.isprintable())[:limit]
 
 
+
+def sentence(value, limit: int = 512) -> str:
+    """UI-facing errors are sentence-cased (protocol.md §11)."""
+    text = san(value, limit)
+    for i, ch in enumerate(text):
+        if ch.isalpha():
+            return text[:i] + ch.upper() + text[i + 1:]
+    return text
+
 def sanitize_filename(name: str) -> str:
     """Constrain a peer-supplied filename to a safe basename inside the receive dir."""
     name = str(name).replace("\\", "/")
@@ -128,6 +137,7 @@ class TransferEngine:
         self.verified_transfers: dict[str, dict] = {}
         self._progress_callback: Optional[Callable] = None
         self._chat_callback: Optional[Callable] = None
+        self._security_callback: Optional[Callable] = None
         self._receive_dir = os.path.expanduser("~/Downloads/SyncFlow")
         self.identity = identity or DeviceIdentityKeys()
         self.device_name = device_name
@@ -212,6 +222,9 @@ class TransferEngine:
 
     def set_approval(self, enabled: bool):
         self.require_approval = enabled
+
+    def set_security_callback(self, callback: Callable):
+        self._security_callback = callback
 
     def set_chat_callback(self, callback: Callable):
         self._chat_callback = callback
@@ -347,7 +360,6 @@ class TransferEngine:
             task._writer = writer
 
             offer, session = handshake_offer(self.identity)
-            offer["security"] = "e2e-blockchain-v1"
             await self._write_json(writer, offer, HDR_TIMEOUT)
 
             response = await self._read_json(reader, HDR_TIMEOUT)
@@ -372,14 +384,16 @@ class TransferEngine:
                 f"{task.target_ip}:{task.target_port}", response.get("signingPub", "")
             )
             if not pin_ok:
+                if self._security_callback:
+                    await self._security_callback({"type": "identity_changed", "key": f"{task.target_ip}:{task.target_port}", "reason": pin_why})
                 task.status = "failed"
-                task.error = san(pin_why)
+                task.error = sentence(pin_why)
                 return
 
             # Response status is now authenticated — safe to act on
             if response.get("status") != "accepted":
                 task.status = "failed"
-                task.error = san(response.get("error", "Transfer rejected"))
+                task.error = sentence(response.get("error", "Transfer rejected"))
                 return
 
             meta = {
@@ -398,7 +412,7 @@ class TransferEngine:
             decision = await self._read_enc(reader, session, DECISION_TIMEOUT, MAX_META_BLOB)
             if decision.get("status") != "accepted":
                 reason = decision.get("reason", "user")
-                task.error = san(decision.get("error") or "Transfer declined by receiver")
+                task.error = sentence(decision.get("error") or "Transfer declined by receiver")
                 task.status = "cancelled" if reason == "user" else "failed"
                 return
 
@@ -450,10 +464,10 @@ class TransferEngine:
                 task.status = "cancelled"
             else:
                 task.status = "failed"
-                task.error = "Connection lost" if isinstance(e, (ConnectionError, asyncio.IncompleteReadError)) else san(str(e))
+                task.error = "Connection lost" if isinstance(e, (ConnectionError, asyncio.IncompleteReadError)) else sentence(str(e))
         except Exception as e:
             task.status = "failed"
-            task.error = san(str(e))
+            task.error = sentence(str(e))
         finally:
             task.end_time = time.time()
             if writer:
@@ -524,7 +538,7 @@ class TransferEngine:
         ack = await self._read_enc(reader, session, STREAM_TIMEOUT, MAX_ACK_BLOB)
         if not ack.get("verified"):
             task.status = "failed"
-            task.error = san(ack.get("reason", "verification failed"))
+            task.error = sentence(ack.get("reason", "verification failed"))
             raise IntegrityError(task.error)
 
     # ------------------------------------------------------------------
@@ -538,7 +552,6 @@ class TransferEngine:
                 asyncio.open_connection(target_ip, target_port), CONNECT_TIMEOUT
             )
             offer, session = handshake_offer(self.identity)
-            offer["security"] = "e2e-blockchain-v1"
             await self._write_json(writer, offer, HDR_TIMEOUT)
 
             response = await self._read_json(reader, HDR_TIMEOUT)
@@ -552,6 +565,8 @@ class TransferEngine:
                     return False
             pin_ok, pin_why = self.trust.check(f"{target_ip}:{target_port}", response.get("signingPub", ""))
             if not pin_ok:
+                if self._security_callback:
+                    await self._security_callback({"type": "identity_changed", "key": f"{target_ip}:{target_port}", "reason": pin_why})
                 print(f"Chat: {san(pin_why)}", flush=True)
                 return False
             if response.get("status") != "accepted":
@@ -601,6 +616,8 @@ class TransferEngine:
 
             pin_ok, pin_why = self.trust.check(src_ip, offer.get("signingPub", ""))
             if not pin_ok:
+                if self._security_callback:
+                    await self._security_callback({"type": "identity_changed", "key": src_ip, "reason": pin_why})
                 raise ValueError(pin_why)
 
             accept, session = handshake_accept(self.identity, offer)  # verifies sig + freshness
@@ -747,7 +764,7 @@ class TransferEngine:
                     task.status = "cancelled"
                 else:
                     task.status = "failed"
-                    task.error = san(e)
+                    task.error = sentence(e)
                     task.verified = False
         except asyncio.TimeoutError:
             if task:
@@ -763,7 +780,7 @@ class TransferEngine:
                     task.status = "cancelled"
                 else:
                     task.status = "failed"
-                    task.error = san(e) or "Transfer failed"
+                    task.error = sentence(e) or "Transfer failed"
         finally:
             if task:
                 task.end_time = task.end_time or time.time()
@@ -790,7 +807,7 @@ class TransferEngine:
             if not text.strip():
                 raise ValueError("empty chat message")
             if self._chat_rate_limited(src_ip):
-                await self._write_enc(writer, session, {"ok": False, "error": "rate limited"}, HDR_TIMEOUT, MAX_ACK_BLOB)
+                await self._write_enc(writer, session, {"ok": False, "error": "Rate limited"}, HDR_TIMEOUT, MAX_ACK_BLOB)
                 return
 
             sender_pub = offer.get("signingPub", "")

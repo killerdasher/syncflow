@@ -216,6 +216,11 @@ export function useWebSocket() {
             })
           }
           break
+        case 'security:identity-changed':
+          if (typeof msg.key === 'string' && typeof msg.reason === 'string') {
+            useAppStore.getState().addSecurityToast(msg.key, msg.reason)
+          }
+          break
         case 'pairing:code':
           if (msg.code) {
             useAppStore.getState().setPairingError(null)

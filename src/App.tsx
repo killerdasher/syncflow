@@ -23,6 +23,7 @@ import { useTransferStore } from './stores/transferStore'
 import { useDeviceStore } from './stores/deviceStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useAppStore } from './stores/appStore'
+import { SecurityToastContainer } from './components/shared/SecurityToast'
 import type { Device, Transfer, FileItem } from './lib/types'
 
 // Real peer ids are sha256-derived 32-char hex; locally added devices use
@@ -361,6 +362,7 @@ function App() {
           </div>
         </div>
       )}
+      <SecurityToastContainer />
     </div>
   )
 }

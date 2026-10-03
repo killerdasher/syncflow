@@ -6,7 +6,7 @@ move.
 ## ✅ v1.0 (current)
 
 Desktop: Windows 10/11, Linux (AppImage/deb/rpm), macOS (Intel + Apple
-Silicon). Transfers, sync folders, chat, mDNS discovery, E2E crypto, 147-check
+Silicon). Transfers, sync folders, chat, mDNS discovery, E2E crypto, 152-check
 security suite, automated 3-OS releases.
 
 ## 🔜 Next

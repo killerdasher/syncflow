@@ -47,7 +47,7 @@ import shutil
 import time
 from typing import Optional
 
-from transfer.engine import TRANSFER_ID_RE, sanitize_filename, san
+from transfer.engine import TRANSFER_ID_RE, sanitize_filename, san, sentence
 
 # Keep in sync with main.py (cannot import: main imports this module).
 TARGET_HOST_RE = re.compile(r"^[A-Za-z0-9.\-:]{1,64}$")
@@ -528,7 +528,7 @@ class UploadManager:
             )
         except Exception as e:
             shutil.rmtree(dirpath, ignore_errors=True)
-            return {"type": "error", "error": san(e, 200), "transferId": transfer_id}
+            return {"type": "error", "error": sentence(e, 200), "transferId": transfer_id}
 
         asyncio.create_task(self._cleanup_when_done(task, dirpath))
 

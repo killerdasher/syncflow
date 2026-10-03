@@ -250,6 +250,15 @@ class SyncFlowBackend:
         except Exception as e:
             print(f"Chat relay error to {ip}: {san(e, 120)}", flush=True)
 
+    async def _on_security_event(self, event: dict):
+        """Broadcast security events (e.g., identity change) to all WS clients."""
+        if self.ws_bridge and self.ws_bridge.loop:
+            await self.ws_bridge.send_message({
+                "type": "security:identity-changed",
+                "key": event.get("key", ""),
+                "reason": event.get("reason", ""),
+            })
+
     async def _on_incoming_chat(self, message: dict):
         self._message_log.append(message)
         if len(self._message_log) > 500:
@@ -431,6 +440,7 @@ class SyncFlowBackend:
 
         self.transfer_engine.set_progress_callback(self._on_transfer_progress)
         self.transfer_engine.set_chat_callback(self._on_incoming_chat)
+        self.transfer_engine.set_security_callback(self._on_security_event)
 
         await self.mdns.register()
         self.mdns.start_browsing(self._on_device_found, self._on_device_lost)

@@ -2,7 +2,7 @@
 
 **Status:** descriptive — this document records what the code actually does
 (as of v1.1.1), verified against the source and enforced by the
-147-check test suite. Constants live in code; where this document and the
+152-check test suite. Constants live in code; where this document and the
 code disagree, the code wins and this document is the bug.
 
 Audience: anyone implementing an interoperable client, auditing the
@@ -271,16 +271,24 @@ Plaintext, then everything else is encrypted:
 1. Initiator → `e2e_offer {signingPub, ephemeralPub, timestamp, signature,
    security:"e2e-blockchain-v1"}`; `signature` = Ed25519 over
    `f"{signingPub}:{ephemeralPub}:{timestamp}"`.
-2. Responder verifies freshness (`|now − ts| ≤ 300 s`) and the signature
-   **before** deriving anything, checks the signer against the TOFU trust
-   store (§10.2), replies `e2e_accept {signingPub, ephemeralPub, signature,
-   peerSigningPub, timestamp, status:"accepted"}`.
-3. Initiator re-verifies (signature + freshness + peer identity), both
-   derive keys.
+2. Responder **first validates `security`** against its supported suite
+   list (`e2e.py: SUPPORTED_SECURITY`) — missing or unknown suite → the
+   handshake is refused with `offer missing security suite` /
+   `unsupported security suite: …` (ADR-0002 decision 3). Then it verifies
+   freshness (`|now − ts| ≤ 300 s`) and the signature **before** deriving
+   anything, checks the signer against the TOFU trust store (§10.2), and
+   replies `e2e_accept {signingPub, ephemeralPub, signature, peerSigningPub,
+   timestamp, status:"accepted", security:"e2e-blockchain-v1"}`.
+3. Initiator re-verifies (suite echo → signature → freshness → peer
+   identity), both derive keys.
 
-**Note:** `security:"e2e-blockchain-v1"` is currently *advisory* — the
-receiver checks `type == "e2e_offer"` but does not validate the security
-string. Treat it as documented intent, not a gate (see §13).
+**Suite validation.** The `security` field is not inside the signed
+material, so it cannot *steer* suite selection — behaviour is fixed in
+code and the only outcome for an unknown/missing token is refusal
+(fail-closed, no downgrade path). An `e2e_accept` **without** the field is
+still accepted: that is every build ≤ 1.1.1, and additive policy (§13)
+requires tolerating an absent new key until the next generation makes it
+mandatory.
 
 ### 9.2 Key schedule
 
@@ -378,16 +386,82 @@ Shapes:
 | `{"type":"chat:error","error":"Invalid message\|Empty message"}` | chat validation |
 | `{"type":"transfer:error","transferId","error",["verified"]}` | engine/transfer failures |
 
-Representative triggers (not exhaustive — grep `error":` for the source of
-truth): `Invalid transfer id`, `Invalid target address`, `Invalid file
-list`, `Invalid target port`, `Invalid device id`, `Invalid peer key`,
-`Invalid download path`, `Download path must be inside your home
-directory`, `pairing:generate is local-only`, `Upload resume mismatch`,
-`Target changed mid-upload`, `chunk exceeds 262144 bytes`, `File no longer
-exists on the desktop`, `E2E handshake failed — identity mismatch or MITM
-detected`, `chunk hash mismatch — data tampered`, `chain broken —
-prev_hash mismatch`, `merkle root mismatch`, `Transfer declined by
-receiver`, `Timed out waiting for approval`.
+**Casing rule (error vocabulary).** Every static string carried in an
+`"error"` field is sentence-cased (first character upper-case). The single
+lower-case-prefixed literals are directives that name a message type
+(`pairing:generate is local-only`, the `pairing required: …` gate) — they
+read as instructions, not sentences. Diagnostic reasons that originate as
+exceptions are sentence-cased when they reach the UI (`engine.sentence`,
+`ws_bridge._sentence`). `t_proto` D1 pins the casing; D2 pins this
+catalogue against the source — **a new static error string must be added
+to this list in the same PR.**
+
+**Static catalogue** (machine-checked — every static `"error": "…"` literal
+in `backend/**/*.py` must appear below):
+
+`{"type":"error"}` request-validation and state errors:
+
+- `Download already in progress`
+- `Download path must be inside your home directory`
+- `Files exceed announced batch size`
+- `First file must start at sequence 0`
+- `Invalid JSON`
+- `Invalid auto accept value`
+- `Invalid batch size`
+- `Invalid destination folder`
+- `Invalid device id`
+- `Invalid device name`
+- `Invalid download path`
+- `Invalid file index`
+- `Invalid file list`
+- `Invalid file selection`
+- `Invalid file sequence`
+- `Invalid file size`
+- `Invalid max concurrent value`
+- `Invalid message type`
+- `Invalid peer key`
+- `Invalid sync folders`
+- `Invalid target address`
+- `Invalid target device id`
+- `Invalid target port`
+- `Invalid transfer id`
+- `Message must be an object`
+- `Missing file name`
+- `Missing target IP or files`
+- `No active upload`
+- `No files were uploaded`
+- `None of the selected files exist on disk`
+- `Out-of-sequence file`
+- `Rate limited`
+- `Target changed mid-upload`
+- `Too many files in one upload`
+- `Transfer declined by receiver`
+- `Transfer id already staging`
+- `Transfer is already being downloaded`
+- `Unexpected binary frame during download`
+- `Upload already in progress`
+- `Upload busy`
+- `Upload resume mismatch`
+- `pairing:generate is local-only`
+
+`{"type":"chat:error"}`:
+
+- `Empty message`
+- `Invalid message`
+
+`{"type":"auth_required"}` directive:
+
+- `pairing required: send pairing:generate from the desktop, then pairing/auth`
+
+**Dynamic reasons** (f-strings / exception text — not machine-checked, but
+always sentence-cased at the boundary): `File exceeds N MB upload cap`,
+`Cannot stage upload: …`, `Cannot stage file: …`, `Invalid download path:
+…`, `Timed out waiting for approval`, `Connection lost`, `Cancelled`,
+`Connection timed out`, `Transfer rejected`, `E2E handshake failed —
+identity mismatch or MITM detected`, integrity chain (`chunk hash mismatch
+— data tampered`, `chain broken — prev_hash mismatch`, `merkle root
+mismatch`), and peer-pin reasons from the trust store (e.g. `peer identity
+for <key> CHANGED (possible MITM) …`).
 
 TCP-side integrity failures surface to the UI through `transfer:error`;
 they are never downgraded to warnings.
@@ -429,15 +503,16 @@ Current state, honestly:
 - Frozen-for-now: the SAS derivation (§10.4), the pairing code charset and
   TTL semantics, the E2E key schedule, and all framing caps above.
 
-Policy going forward (decision record: [ADR-0002](adr/0002-frozen-sas-and-versioning.md),
-not yet enforced by code):
+Policy going forward (decision record: [ADR-0002](adr/0002-frozen-sas-and-versioning.md);
+`security` validation is now enforced in code — §9.1, pinned by `t_crypto`
+C7a–C7c):
 
 1. **Additive fields only** within a protocol generation — receivers must
    ignore unknown JSON keys and unknown `type`s.
 2. Any change to framing, key schedule, SAS, or trust semantics = **new
    generation**, advertised in the `e2e_offer.security` string **and**
-   validated by the receiver (closing today's advisory gap) before any
-   other field is read.
+   validated by the receiver before any other field is read (unknown or
+   missing suite → refuse).
 3. This document must be updated in the same PR as any such change; the
    test suite must gain a check that pins the new behaviour.
 
@@ -459,7 +534,7 @@ not yet enforced by code):
   discovered devices are untrusted until a transfer handshake + pin says
   otherwise.
 - Reported vulnerabilities: see [SECURITY.md](../SECURITY.md). Test evidence:
-  [security-audit.md](security-audit.md) (147 checks).
+  [security-audit.md](security-audit.md) (152 checks).
 
 ---
 

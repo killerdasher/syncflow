@@ -23,7 +23,7 @@ the receiver (see [protocol.md §9.1](../protocol.md#91-handshake)).
    switch).
 3. **Any breaking change** (framing, key schedule, SAS, trust semantics)
    must (a) start being *validated* by the receiver in the handshake
-   `security` string — closing today's advisory gap — and (b) ship in the
+   `security` string — the gap is now closed by code (see Consequences) — and (b) ship in the
    same PR as an update to `docs/protocol.md` and a test that pins the new
    behaviour.
 
@@ -32,6 +32,8 @@ the receiver (see [protocol.md §9.1](../protocol.md#91-handshake)).
 - ✅ Users can trust the icon ritual; tests pin the derivation
   (`t_lan_auth` L21–L24 re-derive it independently).
 - ✅ Written-down policy instead of folklore; protocol.md §13 points here.
-- ⚠️ Until decision 3 is implemented, old and new builds coexist by
-  ignorance, not negotiation — the known compatibility gap, tracked as
-  future work.
+- ✅ **Amended 2026-10-03:** decision 3 implemented — `handshake_accept`
+  refuses missing/unknown `security` suites and `handshake_complete`
+  validates the echo (legacy accepts without the field still pass,
+  per additive policy §13). Pinned by `t_crypto` C7a–C7c; old and new
+  builds now coexist by **validation**, not ignorance.
