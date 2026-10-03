@@ -15,6 +15,10 @@
  *      back over WS (ready -> binary -> file-done) and sha256-verify it
  *   8. parsePairQr() accepts the desktop's syncflow://pair payload and
  *      rejects foreign/malformed codes
+ *   9. interrupted upload resumes: a raw socket stages part of a file and
+ *      drops, then uploadFiles() with the same transferId reports the
+ *      partial via transfer:upload:resume, seeks, streams the rest and
+ *      the assembled file sha256-matches on disk
  *
  * Shims localStorage/window over Node globals, bundles the real bridge with
  * esbuild, and uses Node's built-in WebSocket — no browser needed.
@@ -341,9 +345,100 @@ async function main() {
   if (bridge.parsePairQr('garbage') !== null) fail('parsePairQr accepted garbage')
   log('QR pair parsing accepts ours, rejects foreign/malformed')
 
+  // 9. upload resume after an interrupted socket: stage the first chunk
+  //    over a separate loopback socket, drop it, then let the real
+  //    uploadFiles() (same transferId, phone connection) resume the rest.
+  const resumeTid = `tr-up-resume-${Date.now()}`
+  const resumeName = `bridge-resume-${Date.now()}.bin`
+  const resumePayload = Buffer.from(
+    `syncflow-resume-test:${process.pid}:${Date.now()}:`.padEnd(64, 'x').repeat(16384) // deterministic 1 MiB body
+  )
+  const resumeSha = createHash('sha256').update(resumePayload).digest('hex')
+  const partialBytes = 256 * 1024 // exactly one chunk lands before the drop
+  const raw = new WebSocket(desktopUrl)
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('raw announce socket never opened')), 8000)
+    raw.onopen = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    raw.onerror = () => {
+      clearTimeout(timer)
+      reject(new Error('raw announce socket error'))
+    }
+  })
+  const readyRaw = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('no ready for partial stage')), 8000)
+    raw.onmessage = (e) => {
+      let m
+      try {
+        m = JSON.parse(String(e.data))
+      } catch {
+        return
+      }
+      if (m.type === 'transfer:upload:ready') {
+        clearTimeout(timer)
+        resolve(m)
+      } else if (m.type === 'error') {
+        clearTimeout(timer)
+        reject(new Error(`partial stage error: ${m.error}`))
+      }
+    }
+  })
+  raw.send(
+    JSON.stringify({
+      type: 'transfer:upload',
+      transferId: resumeTid,
+      seq: 0,
+      name: resumeName,
+      size: resumePayload.length,
+      batchTotalBytes: resumePayload.length,
+      targetIp: '127.0.0.1',
+      targetPort: tcpPort,
+    })
+  )
+  const stgReady = await readyRaw
+  if (stgReady.resumeFrom !== 0) fail(`unexpected resumeFrom ${stgReady.resumeFrom} on fresh stage`)
+  raw.send(resumePayload.subarray(0, partialBytes))
+  await new Promise((r) => setTimeout(r, 400)) // let the chunk land
+  try {
+    raw.close()
+  } catch {}
+  await new Promise((r) => setTimeout(r, 500)) // server processes the detach
+  const resumed = await bridge.uploadFiles(
+    [{ name: resumeName, path: resumeName, size: resumePayload.length,
+       type: 'application/octet-stream', blob: new Blob([resumePayload]) }],
+    { ip: '127.0.0.1', port: tcpPort },
+    resumeTid
+  )
+  if (!resumed) {
+    const types = seen.map((m) => m.type).slice(-8)
+    fail(`resumed uploadFiles returned false (recent frames: ${types.join(',') || 'none'})`)
+  }
+  const resumePath = join(receiveDir, resumeName)
+  const resumeStart = Date.now()
+  let resumeDelivered = false
+  while (Date.now() - resumeStart < 8000) {
+    try {
+      const got = readFileSync(resumePath)
+      if (createHash('sha256').update(got).digest('hex') === resumeSha) {
+        resumeDelivered = true
+        break
+      }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 200))
+  }
+  if (!resumeDelivered) {
+    writeFileSync(join(tmpdir(), 'bridge-backend.log'), backendLog.join(''))
+    const tail = seen.slice(-10).map((m) => `${m.type}${m.error ? ':' + m.error : ''}`)
+    fail(`resumed upload never arrived intact (frames: ${tail.join(' | ')}; log: /tmp/bridge-backend.log)`)
+  }
+  rmSync(resumePath, { force: true })
+  log('interrupted upload resumed from resumeFrom and delivered + sha256 matched')
+
   rmSync(receivedPath, { force: true })
   cleanup()
-  console.log('[bridge-test] PASS (8 steps)')
+  console.log('[bridge-test] PASS (9 steps)')
   process.exit(0)
 }
 

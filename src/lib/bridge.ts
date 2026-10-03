@@ -275,6 +275,23 @@ export function onBridgeBinary(cb: BinaryListener): () => void {
   }
 }
 
+/**
+ * Subscribe to connection status. Returns an unsubscribe function.
+ * Companion uploads use this to fail fast (instead of waiting out a 20s
+ * reply timeout) when the socket drops mid-transfer.
+ */
+export function onBridgeStatus(cb: StatusListener): () => void {
+  statusListeners.add(cb)
+  return () => {
+    statusListeners.delete(cb)
+  }
+}
+
+/** True while the companion socket is open and authenticated. */
+export function isBridgeConnected(): boolean {
+  return authed && ws !== null && ws.readyState === WebSocket.OPEN
+}
+
 interface BridgeWaiter {
   promise: Promise<any | null>
   cancel: () => void

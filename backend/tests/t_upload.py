@@ -1,4 +1,4 @@
-"""Phase 3 chunked companion upload — 12 checks.
+"""Phase 3 chunked companion upload — 18 checks.
 
 Spawns a fresh LAN-mode backend (WS 19996 / TCP 19986, state in
 /tmp/opencode/sfUP) and drives the full upload protocol over real
@@ -10,8 +10,13 @@ websockets frames:
     the engine to this same instance's TCP listener (auto-accept +
     isolated download dir), sha256 verified, staging removed
   * traversal names, size caps, negative sizes, out-of-sequence seq,
-    oversized frames, mid-flight cancel, and disconnect cleanup all
-    behave (session aborted, connection survives, no staged leftovers)
+    oversized frames, and mid-flight cancel all behave (session aborted,
+    connection survives, no staged leftovers)
+  * disconnect keeps partial progress as a resumable orphan:
+    transfer:upload:resume reports nextSeq/partial, the next announce
+    appends from resumeFrom (sha256 proves the join), completed files
+    are skipped, changed file lists abort, cancel clears the orphan,
+    TTL sweep + boot wipe expire kept bytes
 """
 import asyncio
 import hashlib
@@ -384,19 +389,212 @@ async def run_upload_tests():
                ready_ok and m.get("success") is True and stage_gone,
                f"ready={ready_ok} cancelled={m.get('success')} staging={stage_gone}")
 
-            # C11: disconnect mid-upload cleans staging (last on this socket)
+            # C11: disconnect mid-upload keeps resumable staging (last on this socket)
             await ws.send(json.dumps({
                 "type": "transfer:upload", "transferId": "tr-up-disc",
                 "seq": 0, "name": "d.bin", "size": 100,
                 "batchTotalBytes": 100, "targetIp": "127.0.0.1",
+                "targetPort": TCP_UP,
             }))
             m = await _recv_until(ws, lambda x: x.get("type") in ("transfer:upload:ready", "error"))
             ready_ok = m.get("type") == "transfer:upload:ready"
             await ws.send(b"z" * 10)
             await asyncio.sleep(0.2)
-        stage_gone = await _wait_gone(os.path.join(STAGING, "tr-up-disc"))
-        ok("upload: disconnect mid-upload cleans staging",
-           ready_ok and stage_gone, f"ready={ready_ok} staging={stage_gone}")
+        await asyncio.sleep(0.3)  # let the server process the close/detach
+        disc_path = os.path.join(STAGING, "tr-up-disc", "0", "d.bin")
+        disc_kept = os.path.isfile(disc_path) and os.path.getsize(disc_path) == 10
+        ok("upload: disconnect mid-upload keeps resumable staging",
+           ready_ok and disc_kept, f"ready={ready_ok} partial={disc_kept}")
+
+        # ---- R1: resume the partial file from a fresh connection -------------
+        async with _connect("127.0.0.1", WS_UP) as ws2:
+            await ws2.send(json.dumps({"type": "transfer:upload:resume",
+                                       "transferId": "tr-up-disc"}))
+            m = await _recv_until(ws2, lambda x: x.get("type") in
+                                  ("transfer:upload:resume:ready", "error"))
+            partial = m.get("partial") if m.get("type") == "transfer:upload:resume:ready" else None
+            resume_ok = (m.get("type") == "transfer:upload:resume:ready"
+                         and m.get("resumable") is True and m.get("nextSeq") == 0
+                         and isinstance(partial, dict) and partial.get("bytes") == 10)
+            await ws2.send(json.dumps({
+                "type": "transfer:upload", "transferId": "tr-up-disc",
+                "seq": 0, "name": "d.bin", "size": 100,
+                "batchTotalBytes": 100, "targetIp": "127.0.0.1",
+                "targetPort": TCP_UP,
+            }))
+            m = await _recv_until(ws2, lambda x: x.get("type") in ("transfer:upload:ready", "error"))
+            seek_ok = (m.get("type") == "transfer:upload:ready"
+                       and m.get("resumeFrom") == 10)
+            await ws2.send(b"z" * 90)  # append the remaining 90 bytes
+            await ws2.send(json.dumps({"type": "transfer:upload:end",
+                                       "transferId": "tr-up-disc", "seq": 0}))
+            m = await _recv_until(ws2, lambda x: x.get("type") in ("transfer:upload:file-done", "error"))
+            end_ok = m.get("type") == "transfer:upload:file-done"
+            await ws2.send(json.dumps({"type": "transfer:upload:finish",
+                                       "transferId": "tr-up-disc"}))
+            m = await _recv_until(ws2, lambda x: x.get("type") in ("transfer:new", "error"))
+            new_ok = m.get("type") == "transfer:new"
+        sha_z = hashlib.sha256(b"z" * 100).hexdigest()
+        landed = await _wait_file(os.path.join(DOWNLOAD_DIR, "d.bin"), sha_z)
+        staging_clean = await _wait_gone(os.path.join(STAGING, "tr-up-disc"))
+        ok("upload: resume after disconnect appends partial and completes",
+           resume_ok and seek_ok and end_ok and new_ok and landed and staging_clean,
+           f"resume={resume_ok} seek={seek_ok} end={end_ok} new={new_ok} "
+           f"landed={landed} staging={staging_clean}")
+
+        # ---- R2: completed files are skipped after a between-files disconnect
+        f0 = b"aaa"
+        f1 = b"bbb"
+        async with _connect("127.0.0.1", WS_UP) as ws3:
+            await ws3.send(json.dumps({
+                "type": "transfer:upload", "transferId": "tr-up-skip",
+                "seq": 0, "name": "skip-0.bin", "size": 3,
+                "batchTotalBytes": 6, "targetIp": "127.0.0.1",
+                "targetPort": TCP_UP,
+            }))
+            m = await _recv_until(ws3, lambda x: x.get("type") in ("transfer:upload:ready", "error"))
+            r0 = m.get("type") == "transfer:upload:ready"
+            await ws3.send(f0)
+            await ws3.send(json.dumps({"type": "transfer:upload:end",
+                                       "transferId": "tr-up-skip", "seq": 0}))
+            m = await _recv_until(ws3, lambda x: x.get("type") in ("transfer:upload:file-done", "error"))
+            d0 = m.get("type") == "transfer:upload:file-done"
+        await asyncio.sleep(0.3)
+        async with _connect("127.0.0.1", WS_UP) as ws4:
+            await ws4.send(json.dumps({"type": "transfer:upload:resume",
+                                       "transferId": "tr-up-skip"}))
+            m = await _recv_until(ws4, lambda x: x.get("type") in
+                                  ("transfer:upload:resume:ready", "error"))
+            skip_ok = (m.get("type") == "transfer:upload:resume:ready"
+                       and m.get("resumable") is True and m.get("nextSeq") == 1
+                       and m.get("partial") is None)
+            await ws4.send(json.dumps({
+                "type": "transfer:upload", "transferId": "tr-up-skip",
+                "seq": 1, "name": "skip-1.bin", "size": 3,
+                "batchTotalBytes": 6, "targetIp": "127.0.0.1",
+                "targetPort": TCP_UP,
+            }))
+            m = await _recv_until(ws4, lambda x: x.get("type") in ("transfer:upload:ready", "error"))
+            r1 = m.get("type") == "transfer:upload:ready"
+            await ws4.send(f1)
+            await ws4.send(json.dumps({"type": "transfer:upload:end",
+                                       "transferId": "tr-up-skip", "seq": 1}))
+            m = await _recv_until(ws4, lambda x: x.get("type") in ("transfer:upload:file-done", "error"))
+            d1 = m.get("type") == "transfer:upload:file-done"
+            await ws4.send(json.dumps({"type": "transfer:upload:finish",
+                                       "transferId": "tr-up-skip"}))
+            m = await _recv_until(ws4, lambda x: x.get("type") in ("transfer:new", "error"))
+            n2 = m.get("type") == "transfer:new"
+        s0 = await _wait_file(os.path.join(DOWNLOAD_DIR, "skip-0.bin"),
+                              hashlib.sha256(f0).hexdigest())
+        s1 = await _wait_file(os.path.join(DOWNLOAD_DIR, "skip-1.bin"),
+                              hashlib.sha256(f1).hexdigest())
+        staging_clean = await _wait_gone(os.path.join(STAGING, "tr-up-skip"))
+        ok("upload: resume skips completed files in the batch",
+           r0 and d0 and skip_ok and r1 and d1 and n2 and s0 and s1 and staging_clean,
+           f"r0={r0} d0={d0} resume={skip_ok} r1={r1} d1={d1} new={n2} "
+           f"s0={s0} s1={s1} staging={staging_clean}")
+
+        # ---- R3: resume for an unknown id reports a fresh start --------------
+        async with _connect("127.0.0.1", WS_UP) as ws5:
+            await ws5.send(json.dumps({"type": "transfer:upload:resume",
+                                       "transferId": "tr-never-existed"}))
+            m = await _recv_until(ws5, lambda x: x.get("type") in
+                                  ("transfer:upload:resume:ready", "error"))
+            fresh_ok = (m.get("type") == "transfer:upload:resume:ready"
+                        and m.get("resumable") is False and m.get("nextSeq") == 0
+                        and m.get("partial") is None)
+        ok("upload: resume of unknown id reports fresh state", fresh_ok, str(m))
+
+        # ---- R4: a changed file list aborts resume (integrity) ---------------
+        async with _connect("127.0.0.1", WS_UP) as ws6:
+            await ws6.send(json.dumps({
+                "type": "transfer:upload", "transferId": "tr-up-mismatch",
+                "seq": 0, "name": "m.bin", "size": 10,
+                "batchTotalBytes": 10, "targetIp": "127.0.0.1",
+            }))
+            m = await _recv_until(ws6, lambda x: x.get("type") in ("transfer:upload:ready", "error"))
+            ready_ok = m.get("type") == "transfer:upload:ready"
+            await ws6.send(b"m" * 4)
+            await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
+        async with _connect("127.0.0.1", WS_UP) as ws7:
+            await ws7.send(json.dumps({"type": "transfer:upload:resume",
+                                       "transferId": "tr-up-mismatch"}))
+            m = await _recv_until(ws7, lambda x: x.get("type") in
+                                  ("transfer:upload:resume:ready", "error"))
+            resume_ok = m.get("type") == "transfer:upload:resume:ready" and m.get("resumable") is True
+            await ws7.send(json.dumps({
+                "type": "transfer:upload", "transferId": "tr-up-mismatch",
+                "seq": 0, "name": "OTHER.bin", "size": 10,
+                "batchTotalBytes": 10, "targetIp": "127.0.0.1",
+            }))
+            m = await _recv_until(ws7, lambda x: x.get("type") in ("error", "transfer:upload:ready"))
+            mismatch_ok = (m.get("type") == "error"
+                           and "mismatch" in str(m.get("error", "")).lower())
+        stage_gone = await _wait_gone(os.path.join(STAGING, "tr-up-mismatch"))
+        ok("upload: resume with a changed file list aborts cleanly",
+           ready_ok and resume_ok and mismatch_ok and stage_gone,
+           f"ready={ready_ok} resume={resume_ok} mismatch={mismatch_ok} staging={stage_gone}")
+
+        # ---- R5: cancel drops bytes kept for resume --------------------------
+        async with _connect("127.0.0.1", WS_UP) as ws8:
+            await ws8.send(json.dumps({
+                "type": "transfer:upload", "transferId": "tr-up-cano",
+                "seq": 0, "name": "o.bin", "size": 10,
+                "batchTotalBytes": 10, "targetIp": "127.0.0.1",
+            }))
+            m = await _recv_until(ws8, lambda x: x.get("type") in ("transfer:upload:ready", "error"))
+            ready_ok = m.get("type") == "transfer:upload:ready"
+            await ws8.send(b"o" * 4)
+            await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
+        async with _connect("127.0.0.1", WS_UP) as ws9:
+            await ws9.send(json.dumps({"type": "command:cancel",
+                                       "transferId": "tr-up-cano"}))
+            m = await _recv_until(ws9, lambda x: x.get("type") in ("transfer:cancelled", "error"))
+            cancel_ok = m.get("type") == "transfer:cancelled" and m.get("success") is True
+            await ws9.send(json.dumps({"type": "transfer:upload:resume",
+                                       "transferId": "tr-up-cano"}))
+            m = await _recv_until(ws9, lambda x: x.get("type") in
+                                  ("transfer:upload:resume:ready", "error"))
+            drop_ok = m.get("type") == "transfer:upload:resume:ready" and m.get("resumable") is False
+        stage_gone = await _wait_gone(os.path.join(STAGING, "tr-up-cano"))
+        ok("upload: cancel clears staging kept for resume",
+           ready_ok and cancel_ok and drop_ok and stage_gone,
+           f"ready={ready_ok} cancel={cancel_ok} fresh={drop_ok} staging={stage_gone}")
+
+        # ---- R6: TTL sweep + boot wipe (unit-level on the manager) -----------
+        import upload as upload_mod  # noqa: E402  (backend package on sys.path)
+        unit_home = f"{ART}/sfUP-unit"
+        shutil.rmtree(unit_home, ignore_errors=True)
+        boot_leftover = os.path.join(unit_home, "staging", "tr-old")
+        os.makedirs(boot_leftover, mode=0o700)
+        old_env = os.environ.get("SYNCFLOW_HOME")
+        os.environ["SYNCFLOW_HOME"] = unit_home
+        try:
+            mgr = upload_mod.UploadManager(None, None)
+            boot_ok = not os.path.exists(os.path.join(unit_home, "staging"))
+            expired_dir = os.path.join(unit_home, "staging", "tr-exp")
+            os.makedirs(expired_dir, mode=0o700)
+            mgr.orphans["tr-exp"] = {"dir": expired_dir,
+                                     "created": time.time() - upload_mod.RESUME_TTL - 5}
+            fresh_dir = os.path.join(unit_home, "staging", "tr-fresh")
+            os.makedirs(fresh_dir, mode=0o700)
+            mgr.orphans["tr-fresh"] = {"dir": fresh_dir, "created": time.time()}
+            mgr._sweep_now()
+            sweep_ok = ("tr-exp" not in mgr.orphans
+                        and not os.path.exists(expired_dir)
+                        and "tr-fresh" in mgr.orphans
+                        and os.path.exists(fresh_dir))
+        finally:
+            if old_env is None:
+                os.environ.pop("SYNCFLOW_HOME", None)
+            else:
+                os.environ["SYNCFLOW_HOME"] = old_env
+            shutil.rmtree(unit_home, ignore_errors=True)
+        ok("upload: expired resume staging swept, boot wipes leftovers",
+           boot_ok and sweep_ok, f"boot={boot_ok} sweep={sweep_ok}")
 
         # No stray sessions anywhere
         ok("upload: staging root left empty",
@@ -417,6 +615,6 @@ async def run_upload_tests():
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--list":
-        print(12)
+        print(18)
         sys.exit(0)
     asyncio.get_event_loop().run_until_complete(run_upload_tests())

@@ -39,7 +39,7 @@ transport shim.
 - **Standalone Android** (phone runs the full protocol) remains a later
   large effort; companion validates demand first.
 
-## Phase 0 — Backend: LAN mode + pairing-code auth (prerequisite) — **LANDED 2026-10-03** (`SYNCFLOW_WS_HOST`, `backend/pairing.py`, `t_lan_auth` 23 checks, suite 124/124)
+## Phase 0 — Backend: LAN mode + pairing-code auth (prerequisite) — **LANDED 2026-10-03** (`SYNCFLOW_WS_HOST`, `backend/pairing.py`, `t_lan_auth` 23 checks, suite 130/130)
 
 All desktop-relevant; lands on `main` with tests.
 
@@ -51,7 +51,7 @@ All desktop-relevant; lands on `main` with tests.
 | Origin allowlist | Add Capacitor origins (`capacitor://localhost`, `https://localhost`, `http://localhost` served builds) — but origin is **not** the auth mechanism anymore; auth is code/token |
 | Templates to reuse | `backend/relay/server.py:19-57` already has token issue/verify (`auth` → `auth_ok`) — port that pattern |
 | Docs | Update `docs/networking.md` (table row for LAN mode), `SECURITY.md` threat model, README limitation bullet |
-| Tests | Extend the 124-check suite: happy pairing, wrong-code lockout, token replay, unauthenticated command rejection, LAN-vs-loopback bind, Capacitor origin acceptance, loopback default unchanged |
+| Tests | Extend the 130-check suite: happy pairing, wrong-code lockout, token replay, unauthenticated command rejection, LAN-vs-loopback bind, Capacitor origin acceptance, loopback default unchanged |
 
 Estimated: 1–2 working sessions. Risk: low — opt-in, defaults preserve
 today's behavior exactly.
@@ -59,7 +59,7 @@ today's behavior exactly.
 ## Phase 1 — Renderer transport shim — **LANDED 2026-10-03**
 (`src/lib/bridge.ts` shim + `ConnectScreen`, `build:web`/`dev:web`,
 CSP widened only in the web config, feature gating, and
-`scripts/test-bridge.mjs` — an 8-step live auth/upload/download/QR test wired into CI plus
+`scripts/test-bridge.mjs` — a 9-step live auth/upload/download/QR/resume test wired into CI plus
 a Chrome-headless render smoke of `dist-web`.)
 
 | Item | Detail |
@@ -104,13 +104,13 @@ External deps: none for sideload; $25 only if Play Store.
 
 | Item | Detail |
 |------|--------|
-| Phone→desktop upload | **LANDED** — `transfer:upload/end/finish` control frames + 256 KiB binary chunks over the authed WS (`backend/upload.py`), 8 GiB/file cap (`SYNCFLOW_MAX_UPLOAD_MB`), strict seq/size enforcement, per-connection sessions, staging under `$SYNCFLOW_HOME/staging` (0700) removed on finish/cancel/disconnect, hand-off to the engine → target peer. Renderer: `src/lib/upload.ts` streams picked `File` blobs with socket backpressure; card progress via `transfer:progress`; cancel reuses `command:cancel`. Proven by `t_upload` (12 checks) + bridge-test step 6 (sha256 round trip). **Known gap:** no resume-after-interrupt (re-send the file). |
+| Phone→desktop upload | **LANDED (incl. resume)** — `transfer:upload/end/finish` control frames + 256 KiB binary chunks over the authed WS (`backend/upload.py`), 8 GiB/file cap (`SYNCFLOW_MAX_UPLOAD_MB`), strict seq/size enforcement, per-connection sessions, staging under `$SYNCFLOW_HOME/staging` (0700), hand-off to the engine → target peer. **Resume-after-interrupt:** a disconnect keeps staged bytes as an orphan (completed files + partial, `SYNCFLOW_UPLOAD_RESUME_SEC` TTL, default 1800 s, max 8 LRU; boot wipes staging); `transfer:upload:resume` → `resume:ready{nextSeq, partial, resumable}`, the next announce appends from `resumeFrom` ("ab"), a changed file list aborts, cancel/expiry/boot clear it, and a plain announce may rejoin only when it lines up (next seq, no partial). Renderer: `src/lib/upload.ts` streams picked `File` blobs with socket backpressure, fails fast on socket loss, waits for reconnect and retries bounded (resume query → skip completed → seek), card progress via `transfer:progress`; cancel reuses `command:cancel`. Proven by `t_upload` (18 checks) + bridge-test steps 6 and 9 (sha256 round trips). |
 | Desktop→phone receive | **LANDED** — `transfer:download{transferId,fileIndex}` → `ready` → 256 KiB binary frames → `file-done{received,sha256}` (`backend/download.py`); paths resolved **server-side** from the engine task table (client never sends a path), one stream per connection AND per transfer, per-2 MB loop yields so cancel/detach stay responsive, `command:cancel` fallback. Renderer: `src/lib/download.ts` reassembles + verifies counts/sha, saves via Capacitor Filesystem cache + **system share sheet** (native) or anchor download (web); `TransferCard` shows a companion-only **Save to device** button; `transfers:update` history sync seeds the list on connect. Proven by `t_download` (10 checks) + bridge-test step 7 (sha256 round trip). |
 | QR connect | **LANDED** — three paths: (1) in-app camera scan (ML Kit, `Scan QR` on ConnectScreen → `syncflow://pair` payload), (2) system-camera deep link (`syncflow` scheme intent in the Android manifest / iOS URL type → `appUrlOpen` → auto-pair), (3) manual entry. Parser `src/lib/qr.ts` rejects foreign schemes/hostile hosts (bridge-test step 8). |
 | Notifications | **LANDED (foreground)** — ConnectScreen requests permission inside the connect gesture; native builds schedule OS local notifications via `@capacitor/local-notifications` (Android WebView has no Web Notification API), tap maps to navigation. **No background push** (no FCM relay on a LAN-only desktop) — documented limitation, not hidden |
 | Chat / devices / transfers / settings peers | Already work through the Phase 1 shim |
 
-Remaining (optional): resume-after-interrupt for uploads; Play-Store distribution. Estimated for those: 1–2 sessions.
+Remaining (optional): Play-Store distribution. Estimated: 1 session (plus the $25 Play-console fee).
 
 ## Phase 4 — iOS — **Path A LANDED 2026-10-03** (compile-check only; Path B awaits the $99 Apple Developer account)
 

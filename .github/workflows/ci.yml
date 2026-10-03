@@ -44,7 +44,7 @@ jobs:
           npx vite build --config vite.web.config.ts
           node scripts/test-bridge.mjs
 
-      - name: Security suite (124 checks, fresh live instances)
+      - name: Security suite (130 checks, fresh live instances)
         run: backend/tests/run_all.sh
 
       - name: Build frozen backend (PyInstaller)
