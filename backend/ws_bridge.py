@@ -5,6 +5,7 @@ from typing import Optional, Set, Callable, Any
 from websockets.server import serve
 
 from pairing import CODE_TTL, lan_ip, pair_qr
+from upload import UPLOAD_JSON_TYPES
 
 # Browser-enforced origins only: file:// pages report the string "null",
 # the Vite dev server reports its localhost origin. Cross-origin browser
@@ -42,6 +43,7 @@ class WebSocketBridge:
         self.host = host or env_host or "127.0.0.1"
         self.lan_mode = self.host not in ("127.0.0.1", "::1")
         self.pairing = None  # set by set_pairing(); fail-closed if absent
+        self.upload = None   # set by set_upload(); Phase 3 chunked uploads
         self.clients: Set = set()
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._server = None
@@ -49,6 +51,9 @@ class WebSocketBridge:
 
     def set_pairing(self, manager):
         self.pairing = manager
+
+    def set_upload(self, manager):
+        self.upload = manager
 
     def on(self, message_type: str, handler: Callable):
         self._handlers[message_type] = handler
@@ -89,6 +94,20 @@ class WebSocketBridge:
 
         try:
             async for message in ws:
+                # Phase 3: raw binary frames are upload payload. They carry
+                # no type field, so they are routed before JSON parsing and
+                # only ever reach an authenticated client's staging session.
+                if isinstance(message, (bytes, bytearray)):
+                    if not authed:
+                        await self._safe_send(
+                            ws,
+                            {"type": "auth_required",
+                             "error": "pairing required: send pairing:generate from the desktop, then pairing/auth"},
+                        )
+                    elif self.upload is not None:
+                        await self.upload.on_chunk(ws, bytes(message))
+                    continue
+
                 # Robustness: malformed input never kills the connection
                 try:
                     data = json.loads(message)
@@ -162,6 +181,18 @@ class WebSocketBridge:
                     )
                     continue
 
+                # Phase 3 upload control frames — dispatched here (post-auth,
+                # same as every handler) so the manager gets the connection.
+                if self.upload is not None and msg_type in UPLOAD_JSON_TYPES:
+                    try:
+                        response = await self.upload.handle(ws, data)
+                        if response:
+                            await ws.send(json.dumps(response))
+                    except Exception as e:
+                        print(f"Handler error for {_san(msg_type, 64)}: {_san(e, 160)}", flush=True)
+                        await self._safe_send(ws, {"type": "error", "error": _san(e, 200)})
+                    continue
+
                 handler = self._handlers.get(msg_type)
                 if handler is None:
                     print(f"Unknown message type: {_san(msg_type, 64)}", flush=True)
@@ -178,6 +209,8 @@ class WebSocketBridge:
         except Exception as e:
             print(f"Client error: {_san(e, 160)}", flush=True)
         finally:
+            if self.upload is not None:
+                self.upload.detach(ws)
             self.clients.discard(ws)
             print(f"Electron client disconnected ({len(self.clients)} remaining)", flush=True)
 

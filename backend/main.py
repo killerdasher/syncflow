@@ -13,6 +13,7 @@ from discovery.mdns import MDNSDiscovery
 from transfer.engine import TransferEngine, TRANSFER_ID_RE, san
 from networking import TCPServer
 from ws_bridge import WebSocketBridge
+from upload import UploadManager
 from pairing import PairingManager
 from crypto.e2e import DeviceIdentityKeys
 from crypto.blockchain import sha256_str
@@ -37,6 +38,7 @@ class SyncFlowBackend:
         self.transfer_engine = TransferEngine(identity=self.identity, device_name=self.device_name)
         self.tcp_server = TCPServer(self.transfer_engine, port=self.tcp_port)
         self.ws_bridge: Optional[WebSocketBridge] = None
+        self.upload: Optional[UploadManager] = None
         self._running = False
         self._message_log: list[dict] = []
         # Chat history survives restarts (bounded, written to the app home)
@@ -167,6 +169,9 @@ class SyncFlowBackend:
         if not isinstance(transfer_id, str) or not TRANSFER_ID_RE.match(transfer_id):
             return {"type": "error", "error": "Invalid transfer id"}
         success = self.transfer_engine.cancel_transfer(transfer_id)
+        if not success and self.upload is not None:
+            # Phase 3: cancel while still staging (before engine hand-off)
+            success = self.upload.cancel(transfer_id)
         return {"type": "transfer:cancelled", "transferId": transfer_id, "success": success}
 
     async def _handle_devices_list(self, data: dict) -> dict:
@@ -374,6 +379,8 @@ class SyncFlowBackend:
         self.ws_bridge.set_pairing(
             PairingManager(os.path.join(os.path.dirname(self._chat_path), "pairing.json"))
         )
+        self.upload = UploadManager(self.ws_bridge, self.transfer_engine)
+        self.ws_bridge.set_upload(self.upload)
         self._register_handlers()
 
         self.transfer_engine.set_progress_callback(self._on_transfer_progress)

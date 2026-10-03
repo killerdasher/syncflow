@@ -39,7 +39,7 @@ transport shim.
 - **Standalone Android** (phone runs the full protocol) remains a later
   large effort; companion validates demand first.
 
-## Phase 0 — Backend: LAN mode + pairing-code auth (prerequisite) — **LANDED 2026-10-03** (`SYNCFLOW_WS_HOST`, `backend/pairing.py`, `t_lan_auth` 23 checks, suite 102/102)
+## Phase 0 — Backend: LAN mode + pairing-code auth (prerequisite) — **LANDED 2026-10-03** (`SYNCFLOW_WS_HOST`, `backend/pairing.py`, `t_lan_auth` 23 checks, suite 114/114)
 
 All desktop-relevant; lands on `main` with tests.
 
@@ -51,7 +51,7 @@ All desktop-relevant; lands on `main` with tests.
 | Origin allowlist | Add Capacitor origins (`capacitor://localhost`, `https://localhost`, `http://localhost` served builds) — but origin is **not** the auth mechanism anymore; auth is code/token |
 | Templates to reuse | `backend/relay/server.py:19-57` already has token issue/verify (`auth` → `auth_ok`) — port that pattern |
 | Docs | Update `docs/networking.md` (table row for LAN mode), `SECURITY.md` threat model, README limitation bullet |
-| Tests | Extend the 102-check suite: happy pairing, wrong-code lockout, token replay, unauthenticated command rejection, LAN-vs-loopback bind, Capacitor origin acceptance, loopback default unchanged |
+| Tests | Extend the 114-check suite: happy pairing, wrong-code lockout, token replay, unauthenticated command rejection, LAN-vs-loopback bind, Capacitor origin acceptance, loopback default unchanged |
 
 Estimated: 1–2 working sessions. Risk: low — opt-in, defaults preserve
 today's behavior exactly.
@@ -59,7 +59,7 @@ today's behavior exactly.
 ## Phase 1 — Renderer transport shim — **LANDED 2026-10-03**
 (`src/lib/bridge.ts` shim + `ConnectScreen`, `build:web`/`dev:web`,
 CSP widened only in the web config, feature gating, and
-`scripts/test-bridge.mjs` — a 5-step live auth-flow test wired into CI plus
+`scripts/test-bridge.mjs` — a 6-step live auth-flow test wired into CI plus
 a Chrome-headless render smoke of `dist-web`.)
 
 | Item | Detail |
@@ -74,7 +74,7 @@ a Chrome-headless render smoke of `dist-web`.)
 Estimated: 1–2 sessions. Verifiable in plain Chrome before any Android
 tooling exists (connect to a LAN-mode desktop).
 
-## Phase 2 — Android APK + CI release
+## Phase 2 — Android APK + CI release — **LANDED 2026-10-03**
 
 | Item | Detail |
 |------|--------|
@@ -89,14 +89,22 @@ tooling exists (connect to a LAN-mode desktop).
 | Play Store (later, optional) | $25 one-time, AAB (`bundleRelease`), Play App Signing (upload key managed by Google), Privacy Policy URL + Data-safety form (LAN-only, no data collection — easy), store listing screenshots |
 | Device testing | Manual install on your phone (Parrot↔phone on same LAN); optional emulator screenshot job in CI later |
 
-Estimated: 1–2 sessions after Phase 1. External deps: none for sideload;
-$25 only if Play Store.
+Landed: `capacitor.config.ts` + committed `android/` (minSdk 26, cleartext
+network-security config, `allowBackup=false`), branded icons via
+`@capacitor/assets`, versionCode/versionName synced from `package.json`,
+release keystore (RSA-4096) generated → GH secrets + **local backup at
+`~/.local/syncflow-android-keystore/`** (back it up again off-machine!),
+`mobile.yml` builds signed `SyncFlow-<v>-android.apk` on `workflow_dispatch`
+and via `workflow_call` from `release.yml` — tag releases fold the APK into
+`release-files/` so SHA256SUMS + provenance cover it. Verified: APK artifact
+built in CI and its signing cert matches the release keystore.
+External deps: none for sideload; $25 only if Play Store.
 
-## Phase 3 — Phone-native features
+## Phase 3 — Phone-native features — **upload LANDED 2026-10-03; receive-push + notifications remain**
 
 | Item | Detail |
 |------|--------|
-| Phone→desktop upload | Chunked `transfer:upload` frames over the authenticated WS (backend reassembles to the transfer engine); progress + cancel in UI |
+| Phone→desktop upload | **LANDED** — `transfer:upload/end/finish` control frames + 256 KiB binary chunks over the authed WS (`backend/upload.py`), 8 GiB/file cap (`SYNCFLOW_MAX_UPLOAD_MB`), strict seq/size enforcement, per-connection sessions, staging under `$SYNCFLOW_HOME/staging` (0700) removed on finish/cancel/disconnect, hand-off to the engine → target peer. Renderer: `src/lib/upload.ts` streams picked `File` blobs with socket backpressure; card progress via `transfer:progress`; cancel reuses `command:cancel`. Proven by `t_upload` (12 checks) + bridge-test step 6 (sha256 round trip). **Known gap:** no resume-after-interrupt (re-send the file). |
 | Desktop→phone receive | Backend pushes chunks; phone saves via Capacitor Filesystem + system share sheet |
 | Notifications | Foreground WS → local notifications while app is open. **No background push** (no FCM relay on a LAN-only desktop) — documented limitation, not hidden |
 | Chat / devices / transfers / settings peers | Already work through the Phase 1 shim |

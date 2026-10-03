@@ -227,6 +227,47 @@ export function connectCompanion(host: string, code?: string): Promise<string> {
   })
 }
 
+/**
+ * Phase 3 upload plumbing: raw binary frames for file payload plus a
+ * one-shot request/response waiter for the JSON control frames. These are
+ * module-level (not on the electronAPI shim) because only the companion
+ * streams uploads — Electron sends real desktop paths instead.
+ */
+export function sendBridgeBinary(data: ArrayBuffer): boolean {
+  if (!authed || !ws || ws.readyState !== WebSocket.OPEN) return false
+  try {
+    ws.send(data)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Bytes still queued in the socket's outbound buffer (backpressure). */
+export function bridgeBuffered(): number {
+  return ws && ws.readyState === WebSocket.OPEN ? ws.bufferedAmount : 0
+}
+
+/** Resolve with the first frame matching `pred`, or null on timeout. */
+export function waitForBridgeMessage(
+  pred: (msg: any) => boolean,
+  timeoutMs = 20000
+): Promise<any | null> {
+  return new Promise((resolve) => {
+    const cb: Listener = (msg) => {
+      if (!pred(msg)) return
+      messageListeners.delete(cb)
+      window.clearTimeout(timer)
+      resolve(msg)
+    }
+    const timer = window.setTimeout(() => {
+      messageListeners.delete(cb)
+      resolve(null)
+    }, timeoutMs)
+    messageListeners.add(cb)
+  })
+}
+
 /** Assign the shim onto `window.electronAPI` (companion mode only). */
 export function installBridge(): void {
   const shim = {

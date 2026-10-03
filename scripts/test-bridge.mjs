@@ -8,6 +8,9 @@
  *   3. initial fetch after auth delivers identity:info (queue flush proof)
  *   4. reconnect with the persisted token -> 'authed'
  *   5. forget + wrong code -> 'pair_fail:bad_code'
+ *   6. re-pair, then the real uploadFiles() flow: announce -> binary
+ *      chunks -> file-done -> finish -> transfer:new, delivered through
+ *      the engine to this backend's own TCP listener and verified on disk
  *
  * Shims localStorage/window over Node globals, bundles the real bridge with
  * esbuild, and uses Node's built-in WebSocket — no browser needed.
@@ -17,7 +20,7 @@ import { build } from 'esbuild'
 import { spawn } from 'node:child_process'
 import dgram from 'node:dgram'
 import net from 'node:net'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -141,10 +144,17 @@ async function main() {
     clear: () => mem.clear(),
   }
 
-  // --- bundle the real bridge --------------------------------------------
-  const outfile = join(mkdtempSync(join(tmpdir(), 'sfb-')), 'bridge.bundle.mjs')
+  // --- bundle the real bridge + Phase 3 upload helper ---------------------
+  const bundleDir = mkdtempSync(join(tmpdir(), 'sfb-'))
+  const outfile = join(bundleDir, 'bridge.bundle.mjs')
+  const entry = join(bundleDir, 'entry.mjs')
+  writeFileSync(
+    entry,
+    `export * from ${JSON.stringify(join(root, 'src', 'lib', 'bridge.ts'))}\n` +
+      `export * from ${JSON.stringify(join(root, 'src', 'lib', 'upload.ts'))}\n`
+  )
   await build({
-    entryPoints: [join(root, 'src', 'lib', 'bridge.ts')],
+    entryPoints: [entry],
     bundle: true,
     format: 'esm',
     platform: 'browser',
@@ -240,8 +250,53 @@ async function main() {
   if (bad !== 'pair_fail:bad_code') fail(`expected 'pair_fail:bad_code', got '${bad}'`)
   log('wrong code rejected correctly')
 
+  // 6. renderer upload flow — auto-accept so delivery completes unattended,
+  //    target = this backend's own TCP listener (loopback)
+  await wsRequest(desktopUrl, { type: 'settings:apply', autoAccept: true }, 'settings:applied')
+  await wsRequest(desktopUrl, { type: 'pairing:generate' }, 'pairing:code').then(async (m) => {
+    const reauth = await bridge.connectCompanion(phoneUrl, m.code)
+    if (reauth !== 'paired') fail(`expected 'paired' before upload, got '${reauth}'`)
+  })
+  const upName = `bridge-up-${Date.now()}-${Math.floor(Math.random() * 1e6)}.bin`
+  const upBytes = Buffer.from(`syncflow-upload-test:${process.pid}:${Date.now()}:`).toString('base64')
+  const payload = Buffer.concat([Buffer.from(upBytes.repeat(4000))]) // ~300 KB across 2 frames
+  const receiveDir = join(process.env.HOME || process.env.USERPROFILE || '', 'Downloads', 'SyncFlow')
+  const receivedPath = join(receiveDir, upName)
+  const uploaded = await bridge.uploadFiles(
+    [{ name: upName, path: upName, size: payload.length, type: 'application/octet-stream',
+       blob: new Blob([payload]) }],
+    { ip: '127.0.0.1', port: tcpPort },
+    `tr-up-${Date.now()}`
+  )
+  if (!uploaded) {
+    const types = seen.map((m) => m.type).slice(-8)
+    fail(`uploadFiles returned false (recent frames: ${types.join(',') || 'none'})`)
+  }
+  // engine round trip: file lands in the default receive dir with our bytes
+  const { createHash } = await import('node:crypto')
+  const sha = createHash('sha256').update(payload).digest('hex')
+  const t0 = Date.now()
+  let delivered = false
+  while (Date.now() - t0 < 8000) {
+    try {
+      const got = readFileSync(receivedPath)
+      if (createHash('sha256').update(got).digest('hex') === sha) {
+        delivered = true
+        break
+      }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 200))
+  }
+  if (!delivered) {
+    writeFileSync(join(tmpdir(), 'bridge-backend.log'), backendLog.join(''))
+    const tail = seen.slice(-10).map((m) => `${m.type}${m.error ? ':' + m.error : ''}${m.status ? ':' + m.status : ''}`)
+    fail(`uploaded file never arrived in the receive dir (frames: ${tail.join(' | ')}; log: /tmp/bridge-backend.log)`)
+  }
+  rmSync(receivedPath, { force: true })
+  log('renderer upload delivered + sha256 matched')
+
   cleanup()
-  console.log('[bridge-test] PASS (5 steps)')
+  console.log('[bridge-test] PASS (6 steps)')
   process.exit(0)
 }
 

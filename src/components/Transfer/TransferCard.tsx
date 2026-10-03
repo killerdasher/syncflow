@@ -3,6 +3,8 @@ import { motion } from 'framer-motion'
 import { X, RotateCcw, Check, AlertCircle, FileArchive, FileImage, FileVideo, ShieldCheck, Ban, Clock, FolderOpen } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Transfer } from '../../lib/types'
+import { IS_COMPANION } from '../../lib/bridge'
+import { uploadFiles } from '../../lib/upload'
 import { formatBytes, formatSpeed, formatDuration } from '../../lib/constants'
 import { ProgressRing } from './ProgressRing'
 import { useTransferStore } from '../../stores/transferStore'
@@ -55,6 +57,14 @@ export const TransferCard = memo(function TransferCard({ transfer }: TransferCar
       endTime: undefined,
       startTime: Date.now(),
     })
+    if (IS_COMPANION && transfer.files.length > 0 && transfer.files.every((f) => f.blob instanceof Blob)) {
+      await uploadFiles(
+        transfer.files,
+        { ip: transfer.targetIp, deviceId: transfer.targetDeviceId || undefined },
+        transfer.id
+      )
+      return
+    }
     await window.electronAPI.send({
       type: 'command:send',
       targetIp: transfer.targetIp,
