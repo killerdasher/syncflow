@@ -4,6 +4,8 @@ import os
 from typing import Optional, Set, Callable, Any
 from websockets.server import serve
 
+from pairing import CODE_TTL, lan_ip, pair_qr
+
 # Browser-enforced origins only: file:// pages report the string "null",
 # the Vite dev server reports its localhost origin. Cross-origin browser
 # pages (evil.example.com) are rejected at handshake time. Non-browser
@@ -141,13 +143,22 @@ class WebSocketBridge:
                             ws, {"type": "error", "error": "pairing:generate is local-only"}
                         )
                         continue
-                    from pairing import CODE_TTL  # local import keeps module deps light
-
                     code = self.pairing.generate()
+                    host = lan_ip()
                     print(f"Pairing code generated (valid {CODE_TTL:.0f}s)", flush=True)
                     await self._safe_send(
                         ws,
-                        {"type": "pairing:code", "code": code, "expiresIn": int(CODE_TTL)},
+                        {
+                            "type": "pairing:code",
+                            "code": code,
+                            "expiresIn": int(CODE_TTL),
+                            "host": host,
+                            "port": self.port,
+                            "lanMode": bool(self.lan_mode),
+                            "qr": pair_qr(
+                                f"syncflow://pair?host={host}&port={self.port}&code={code}"
+                            ),
+                        },
                     )
                     continue
 

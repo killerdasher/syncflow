@@ -5,6 +5,7 @@ import { clsx } from 'clsx'
 import { useSettingsStore, applySettings } from '../../stores/settingsStore'
 import { usePeerStore } from '../../stores/peerStore'
 import { GlowButton } from '../shared/GlowButton'
+import { PairingCard } from './PairingCard'
 
 type SettingsTab = 'general' | 'network' | 'security' | 'folders'
 
@@ -206,6 +207,8 @@ export function SettingsPage() {
                     same network (or routed).
                   </p>
                 </div>
+
+                <PairingCard />
               </div>
             )}
 

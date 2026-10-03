@@ -1,6 +1,6 @@
 # SyncFlow Security Audit — 2026-10-03
 
-**Status:** complete, all findings sealed · **Suite:** 99/99 checks green on
+**Status:** complete, all findings sealed · **Suite:** 102/102 checks green on
 Ubuntu, Windows and macOS CI · **Dependencies:** `npm audit` 0 vulnerabilities,
 `pip-audit` 0 known vulnerabilities
 
@@ -26,7 +26,7 @@ run) + source review of every listening socket + dependency auditing.
 Environment: Parrot/Linux dev machine; CI replicates the suite on
 Ubuntu, Windows and macOS.
 
-## 2. Automated evidence (99 checks)
+## 2. Automated evidence (102 checks)
 
 `backend/tests/run_all.sh` boots two fresh instances (A: TCP 19974 / WS 18993,
 B: TCP 19975 / WS 18995) and runs nine suites:
@@ -41,7 +41,7 @@ B: TCP 19975 / WS 18995) and runs nine suites:
 | `t_extra` | 6 | Oversized WS message (code 1009) doesn't kill server; cancel leaves no temp files |
 | `t_attacks` | 8 | **Bind posture proven live** (loopback-only WS via `ss`; LAN-IP connect refused), TCP garbage leaks 0 bytes, 120 malformed msgs survive, field injection (peer key/shell meta/file list/transferId) rejected, state perms 0600/0700 |
 | `t_crypto` | 8 | **E2E round-trip proof**: X25519 directional keys, AES-256-GCM bidirectional + tamper rejection + nonce uniqueness, Ed25519 forgery/wrong-key rejection, full signed handshake both ways, stale/forged offer rejection, identity persistence + key-file perms |
-| `t_lan_auth` | 20 | **Phase 0 LAN mode + pairing**: loopback default unchanged, opt-in `0.0.0.0` bind, remote commands refused pre-pairing, local-only code minting, wrong-code/single-use/token paths, forged tokens, Capacitor origin, pairing state 0600; unit TTL + 5-fail lockout |
+| `t_lan_auth` | 23 | **Phase 0 LAN mode + pairing**: loopback default unchanged, opt-in `0.0.0.0` bind, remote commands refused pre-pairing, local-only code minting, wrong-code/single-use/token paths, forged tokens, Capacitor origin, pairing state 0600, QR/endpoint payload (`qr`, `host`, `port`, `lanMode`, TTL); unit TTL + 5-fail lockout |
 
 CI runs the full suite on Linux and the crypto proof standalone on
 **Windows and macOS** (`.github/workflows/ci.yml`), so the encryption claim is
@@ -111,7 +111,7 @@ mDNS TXT sanitization.
 ## 7. Reproduce
 
 ```bash
-backend/tests/run_all.sh            # 99 checks, fresh instances, ~5 min
+backend/tests/run_all.sh            # 102 checks, fresh instances, ~5 min
 backend/venv/bin/pip-audit -r backend/requirements.txt
 npm audit                           # 0 vulnerabilities
 npx tsc --noEmit                    # typecheck

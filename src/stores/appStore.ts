@@ -1,5 +1,14 @@
 import { create } from 'zustand'
 
+export interface PairingSession {
+  code: string
+  qr: string
+  host: string
+  port: number
+  lanMode: boolean
+  expiresAt: number
+}
+
 interface AppState {
   backendConnected: boolean
   setBackendConnected: (connected: boolean) => void
@@ -7,6 +16,11 @@ interface AppState {
   navTarget: string | null
   navigate: (page: string) => void
   clearNavigate: () => void
+  /** Active pairing code for the mobile companion (Phase 0), null = none */
+  pairing: PairingSession | null
+  setPairing: (p: PairingSession | null) => void
+  pairingError: string | null
+  setPairingError: (e: string | null) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -15,4 +29,8 @@ export const useAppStore = create<AppState>((set) => ({
   navTarget: null,
   navigate: (page) => set({ navTarget: page }),
   clearNavigate: () => set({ navTarget: null }),
+  pairing: null,
+  setPairing: (p) => set({ pairing: p }),
+  pairingError: null,
+  setPairingError: (e) => set({ pairingError: e }),
 }))

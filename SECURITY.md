@@ -37,7 +37,7 @@ Please include: affected version/OS, reproduction steps, and impact.
 
 The latest audit — findings, attack journal, seals and residual risks — is in
 [docs/security-audit.md](docs/security-audit.md). The full threat model,
-hardening notes and 99-check security test evidence are in
+hardening notes and 102-check security test evidence are in
 [SECURITY_REPORT.md](SECURITY_REPORT.md).
 
 ## Supported Versions

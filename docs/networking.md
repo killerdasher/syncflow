@@ -23,11 +23,14 @@ SYNCFLOW_WS_HOST=0.0.0.0 ./start-dev.sh     # or export before launching the app
 
 - The backend logs `WebSocket bridge listening on ws://0.0.0.0:18973` plus a
   LAN-mode warning at startup.
-- **Remote clients must pair**: on the desktop send `{"type":"pairing:generate"}`
-  (loopback only) → an 8-character code valid for **5 min**, **single use**.
-  The client sends `{"type":"pairing","code":"..."}` first and receives a
-  **bearer token**; every later connection starts with
-  `{"type":"auth","token":"..."}`. Five wrong codes lock pairing for 5 min.
+- **Remote clients must pair**: on the desktop open **Settings → Network →
+  Pair a mobile device** and click *Generate pairing code* (the card shows the
+  code, a 5-minute countdown, a QR and `ws://host:port`; headless users can
+  still send `{"type":"pairing:generate"}` over loopback instead). The code is
+  **8 characters, valid 5 min, single use**. The client sends
+  `{"type":"pairing","code":"..."}` first and receives a **bearer token**;
+  every later connection starts with `{"type":"auth","token":"..."}`. Five
+  wrong codes lock pairing for 5 min.
 - Unauthenticated remote sockets may only send `pairing`/`auth` — all other
   messages get `{"type":"auth_required"}`.
 - Origins `capacitor://localhost`, `http://localhost`, `https://localhost`

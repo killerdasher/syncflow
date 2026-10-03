@@ -139,6 +139,10 @@ export function useWebSocket() {
               speed: 0,
             })
           }
+          if (typeof msg.error === 'string' && msg.error.includes('pairing')) {
+            useAppStore.getState().setPairing(null)
+            useAppStore.getState().setPairingError(msg.error)
+          }
           break
         case 'peers:list':
         case 'peers:updated':
@@ -150,6 +154,19 @@ export function useWebSocket() {
           if (msg.deviceId) setSelfId(msg.deviceId)
           if (msg.deviceName && !useSettingsStore.getState().settings.deviceName) {
             useSettingsStore.getState().updateSettings({ deviceName: msg.deviceName })
+          }
+          break
+        case 'pairing:code':
+          if (msg.code) {
+            useAppStore.getState().setPairingError(null)
+            useAppStore.getState().setPairing({
+              code: String(msg.code),
+              qr: typeof msg.qr === 'string' ? msg.qr : '',
+              host: typeof msg.host === 'string' ? msg.host : '',
+              port: Number(msg.port) || 18973,
+              lanMode: Boolean(msg.lanMode),
+              expiresAt: Date.now() + (Number(msg.expiresIn) || 300) * 1000,
+            })
           }
           break
         case 'chat:message': {

@@ -1,4 +1,4 @@
-"""Phase 0 LAN mode + pairing auth — 17 checks.
+"""Phase 0 LAN mode + pairing auth — 23 checks.
 
 Spawns two fresh backends:
   * LAN-mode instance  (SYNCFLOW_WS_HOST=0.0.0.0, WS 19993, TCP 19984)
@@ -11,6 +11,7 @@ Capacitor origin acceptance, and unit-level TTL/lockout/perms behaviour of
 backend/pairing.py.
 """
 import asyncio
+import base64
 import json
 import os
 import socket
@@ -163,6 +164,27 @@ async def run_lan_tests():
     code = r.get("code", "")
     ok("L7 desktop pairing:generate returns an 8-char code",
        isinstance(code, str) and len(code) == 8, f"code_len={len(code) if code else 0}")
+
+    # companion-facing payload: QR + endpoint metadata for the Phase 1 shim
+    qr = r.get("qr", "")
+    ok("L7b pairing:code carries an SVG QR data URL",
+       isinstance(qr, str) and qr.startswith("data:image/svg+xml;base64,"),
+       f"qr_prefix={qr[:30] if isinstance(qr, str) else type(qr).__name__}")
+    try:
+        svg = base64.b64decode(qr.split(",", 1)[1], validate=True).decode("utf-8")
+    except Exception:
+        svg = ""
+    ok("L7c QR decodes to an SVG with modules",
+       "<svg" in svg and 'viewBox="0 0' in svg and "<path" in svg,
+       f"svg_len={len(svg)}")
+    ok("L7d endpoint metadata (ttl, host, port, lanMode)",
+       r.get("expiresIn") == 300
+       and isinstance(r.get("host"), str)
+       and bool(r.get("host"))
+       and r.get("port") == WS_LAN
+       and r.get("lanMode") is True,
+       f"expiresIn={r.get('expiresIn')} host={r.get('host')!r} "
+       f"port={r.get('port')} lanMode={r.get('lanMode')}")
 
     # wrong code
     r = await _call(lan_ip, WS_LAN, {"type": "pairing", "code": "ZZZZZZZZ"}, {"pair_fail"})

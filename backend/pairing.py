@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import secrets
+import socket
 import time
 
 # RFC 4648 base32 alphabet (32 symbols) — 8 chars = 40 bits of entropy
@@ -26,6 +27,48 @@ FAIL_ERRORS = ("locked", "no_code", "expired", "bad_code")
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def lan_ip() -> str:
+    """Best-effort primary LAN address (UDP route lookup; sends no packets)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 80))  # TEST-NET: route lookup only
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def pair_qr(payload: str) -> str:
+    """data: URL with an SVG QR of payload.
+
+    Uses qrcode only for the module matrix and renders the SVG here so the
+    backend does not need Pillow (qrcode's PIL image factory would).
+    """
+    import base64
+
+    import qrcode
+
+    qr = qrcode.QRCode(border=2, box_size=8)
+    qr.add_data(payload)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    h, w = len(matrix), len(matrix[0])
+    path = "".join(
+        f"M{x} {y}h1v1h-1z"
+        for y, row in enumerate(matrix)
+        for x, dark in enumerate(row)
+        if dark
+    )
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}"'
+        ' shape-rendering="crispEdges">'
+        f'<rect width="{w}" height="{h}" fill="#ffffff"/>'
+        f'<path d="{path}" fill="#000000"/></svg>'
+    )
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
 
 class PairingManager:
