@@ -27,7 +27,7 @@
     "framer-motion": "^13.4.6",
     "lucide-react": "^1.48.0",
     "react": "^19.3.0",
-    "react-dom": "^18.3.1",
+    "react-dom": "^19.3.0",
     "tailwind-merge": "^3.7.0",
     "ws": "^8.22.0",
     "zustand": "^5.0.15"
@@ -36,7 +36,7 @@
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.5.2",
     "@types/react": "^19.3.0",
-    "@types/react-dom": "^18.3.1",
+    "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
