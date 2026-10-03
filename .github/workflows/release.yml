@@ -147,6 +147,26 @@ jobs:
           fi
           file "$BIN"
           file "$BIN" | grep -q "${{ matrix.backend_arch }}" || { echo "::error::backend is not ${{ matrix.backend_arch }}"; exit 1; }
+          # cryptography>=50 has no CPython x86_64 macOS wheel, so pip builds
+          # the sdist against Homebrew OpenSSL (the pre-freeze import above
+          # proves that build-time libssl carries every symbol _rust needs).
+          # PyInstaller can still bundle a different libssl from its search
+          # path — re-sync the frozen dylibs with the exact libraries _rust
+          # linked, so the frozen backend dlopens symbol-identical copies.
+          if [ "$(uname -m)" = "x86_64" ]; then
+            RUST_SO=$("$PY" -c "import cryptography.hazmat.bindings._rust as m; print(m.__file__)" 2>/dev/null || true)
+            if [ -n "$RUST_SO" ] && [ -f "$RUST_SO" ]; then
+              for lib in libssl libcrypto; do
+                src=$(otool -L "$RUST_SO" | awk -v pat="$lib" 'index($0, pat ".3.dylib") { print $1; exit }')
+                if [ -n "$src" ] && [ -f "$src" ]; then
+                  cp -f "$src" "backend/dist/syncflow-backend/_internal/$lib.3.dylib"
+                  echo "resynced $lib.3.dylib <- $src"
+                else
+                  echo "::warning::no linked $lib found in $RUST_SO"
+                fi
+              done
+            fi
+          fi
           SYNCFLOW_SMOKE_FROZEN="$BIN" env -u PYTHONHOME PYTHONPATH= "$PY" backend/tests/smoke_windows.py
 
       - name: "macOS: build dmg"
