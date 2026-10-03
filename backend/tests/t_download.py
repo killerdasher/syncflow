@@ -265,17 +265,36 @@ async def run_download_tests():
                f"done={done} got={len(blob)} sha_ok={sha == BIG_SHA}")
 
             # ---- C4: second request while streaming rejected ---------------
+            # The push task and the second request race: the busy error can
+            # land before or after the first binary frames. Accumulate
+            # frames while waiting (skip_binary used to drop the stream's
+            # head -> false FAILs when the push won the race).
             await ws.send(json.dumps({"type": "transfer:download",
                                       "transferId": big_tid, "fileIndex": 0}))
             await ws.send(json.dumps({"type": "transfer:download",
                                       "transferId": big_tid, "fileIndex": 0}))
-            m2 = await _recv_until(ws, lambda x: x.get("type") == "error" and
-                                   "progress" in str(x.get("error", "")), timeout=10.0,
-                                   skip_binary=True)
-            busy_ok = m2 is not None
-            done, blob = await _drain_download(ws, timeout=30.0)
-            busy_ok = busy_ok and done is not None and done.get("type") == "transfer:download:file-done" \
-                and blob == BIG
+            parts, m2, done = [], None, None
+            deadline = time.time() + 30.0
+            while done is None and time.time() < deadline:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), max(0.1, deadline - time.time()))
+                except asyncio.TimeoutError:
+                    break
+                if isinstance(raw, (bytes, bytearray)):
+                    parts.append(raw)
+                    continue
+                try:
+                    msg = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("type") == "transfer:download:file-done":
+                    done = msg
+                elif msg.get("type") == "error" and "progress" in str(msg.get("error", "")):
+                    m2 = msg
+            blob = b"".join(parts)
+            busy_ok = m2 is not None and done is not None and blob == BIG
             ok("download: concurrent second request rejected while streaming",
                busy_ok, f"m2={m2} done={done and done.get('type')} bytes={len(blob)}")
 
