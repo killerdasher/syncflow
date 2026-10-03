@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SyncFlow</string>
+    <string name="title_activity_main">SyncFlow</string>
+    <string name="package_name">io.github.killerdasher.syncflow</string>
+    <string name="custom_url_scheme">io.github.killerdasher.syncflow</string>
+</resources>

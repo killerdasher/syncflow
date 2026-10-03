@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SyncFlow is LAN-only and talks to the desktop over plain ws://192.168.x.x:
+  18973. Android cannot scope cleartext permission to RFC1918 CIDR ranges
+  (network-security-config only matches literal domains/IPs), so cleartext is
+  permitted app-wide. The app makes no other network connections; the WS
+  control plane is token-authenticated and file payloads are E2E encrypted
+  (see docs/networking.md + docs/security-audit.md).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

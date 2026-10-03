@@ -1,7 +1,8 @@
 # Tag-driven release pipeline:
 #   git tag v1.0.0 && git push origin v1.0.0
 # → builds Linux (AppImage/deb/rpm), Windows (NSIS + portable),
-#   macOS (dmg Intel + Apple Silicon) on their native runners
+#   macOS (dmg Intel + Apple Silicon) on their native runners,
+#   Android companion APK (mobile.yml, reused here)
 # → SHA256SUMS.txt + provenance attestations
 # → creates a DRAFT GitHub Release (human verifies, then publishes)
 #
@@ -19,6 +20,12 @@ permissions:
   attestations: write
 
 jobs:
+  android:
+    # Reusable Android APK builder (Phase 2) — artifact lands in this run
+    # and is pulled into release-files/ by the release job below.
+    uses: ./.github/workflows/mobile.yml
+    secrets: inherit
+
   build:
     strategy:
       fail-fast: false
@@ -200,7 +207,7 @@ jobs:
           retention-days: 14
 
   release:
-    needs: build
+    needs: [android, build]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -213,6 +220,12 @@ jobs:
           pattern: installers-*
           path: release-files
           merge-multiple: true
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v8
+        with:
+          name: android-apk
+          path: release-files
 
       - name: Add AppImage shortcut installer + icon
         run: |

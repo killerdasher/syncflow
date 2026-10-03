@@ -26,3 +26,7 @@ backend/build/
 # AI local task board
 .ai-tasks/
 dist-web/
+
+# Android release keystore (backed up outside the repo — see mobile.md)
+*.jks
+*.keystore

@@ -1,0 +1,87 @@
+# Android companion APK (Phase 2 of docs/mobile.md).
+#   - workflow_dispatch: build an APK on demand (uploaded as an artifact)
+#   - workflow_call: release.yml calls this on tags; the release job then
+#     pulls the artifact into release-files/ so it lands in SHA256SUMS.txt
+#     and the provenance attestation like every other asset.
+#
+# Signing: release keystore lives in repo secrets (base64 + passwords); the
+# matching private key is backed up outside GitHub. Without the secrets the
+# job still builds (unsigned release APK) so forks/PRs can verify the build.
+name: Android APK
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      apk-name:
+        description: Name of the uploaded APK artifact
+        value: ${{ jobs.build-apk.outputs.apk-name }}
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      apk-name: ${{ steps.meta.outputs.name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Renderer web build (companion)
+        run: npx vite build --config vite.web.config.ts
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Decode release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.SYNCFLOW_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/syncflow-release.jks"
+            echo "SYNCFLOW_ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/syncflow-release.jks" >> "$GITHUB_ENV"
+            echo "release keystore decoded"
+          else
+            echo "::warning::keystore secrets missing — producing an unsigned APK"
+          fi
+
+      - name: Capacitor sync (web assets into android/)
+        run: npx cap sync android
+
+      - name: Gradle assembleRelease
+        env:
+          SYNCFLOW_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.SYNCFLOW_ANDROID_KEYSTORE_PASSWORD }}
+          SYNCFLOW_ANDROID_KEY_ALIAS: ${{ secrets.SYNCFLOW_ANDROID_KEY_ALIAS }}
+          SYNCFLOW_ANDROID_KEY_PASSWORD: ${{ secrets.SYNCFLOW_ANDROID_KEY_PASSWORD }}
+        run: cd android && chmod +x gradlew && ./gradlew assembleRelease --no-daemon
+
+      - name: Name the APK
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          NAME="SyncFlow-${VERSION}-android.apk"
+          mkdir -p apk-out
+          for f in android/app/build/outputs/apk/release/app-release.apk \
+                   android/app/build/outputs/apk/release/app-release-unsigned.apk; do
+            if [ -f "$f" ]; then cp "$f" "apk-out/$NAME"; break; fi
+          done
+          test -f "apk-out/$NAME" || { echo "no release APK produced"; exit 1; }
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -la apk-out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          path: apk-out/*.apk
+          if-no-files-found: error
