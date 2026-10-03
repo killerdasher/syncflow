@@ -130,6 +130,7 @@ cd backend && python3 -m venv venv && source venv/bin/activate \
 
 npm install
 ./start-dev.sh                                   # Windows: start-windows.bat
+npm run build:web                                # optional: browser companion build (Phase 1)
 ```
 
 ## Two-Device LAN Test

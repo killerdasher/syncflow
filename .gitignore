@@ -25,3 +25,4 @@ backend/build/
 
 # AI local task board
 .ai-tasks/
+dist-web/

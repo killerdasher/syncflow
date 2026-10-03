@@ -21,6 +21,9 @@ interface AppState {
   setPairing: (p: PairingSession | null) => void
   pairingError: string | null
   setPairingError: (e: string | null) => void
+  /** Companion (Phase 1) auth state — connect screen shows until true */
+  companionAuthed: boolean
+  setCompanionAuthed: (v: boolean) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -33,4 +36,6 @@ export const useAppStore = create<AppState>((set) => ({
   setPairing: (p) => set({ pairing: p }),
   pairingError: null,
   setPairingError: (e) => set({ pairingError: e }),
+  companionAuthed: false,
+  setCompanionAuthed: (v) => set({ companionAuthed: v }),
 }))

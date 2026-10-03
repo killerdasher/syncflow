@@ -6,6 +6,7 @@ import { useSettingsStore, applySettings } from '../../stores/settingsStore'
 import { usePeerStore } from '../../stores/peerStore'
 import { GlowButton } from '../shared/GlowButton'
 import { PairingCard } from './PairingCard'
+import { IS_COMPANION } from '../../lib/bridge'
 
 type SettingsTab = 'general' | 'network' | 'security' | 'folders'
 
@@ -14,7 +15,7 @@ const tabs = [
   { id: 'network' as SettingsTab, label: 'Network', icon: Network },
   { id: 'security' as SettingsTab, label: 'Security', icon: Shield },
   { id: 'folders' as SettingsTab, label: 'Folders', icon: FolderOpen },
-]
+].filter((tab) => (IS_COMPANION ? tab.id !== 'folders' : true))
 
 function timeAgo(ts?: number): string {
   if (!ts) return '—'
@@ -208,7 +209,7 @@ export function SettingsPage() {
                   </p>
                 </div>
 
-                <PairingCard />
+                {!IS_COMPANION && <PairingCard />}
               </div>
             )}
 
@@ -275,7 +276,7 @@ export function SettingsPage() {
               </div>
             )}
 
-            {activeTab === 'folders' && (
+            {activeTab === 'folders' && !IS_COMPANION && (
               <div className="space-y-5">
                 <h3 className="text-base font-semibold text-frost-100 mb-4">Sync Folders</h3>
                 <p className="text-sm text-frost-300 mb-4">

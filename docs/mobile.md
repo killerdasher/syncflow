@@ -56,7 +56,11 @@ All desktop-relevant; lands on `main` with tests.
 Estimated: 1–2 working sessions. Risk: low — opt-in, defaults preserve
 today's behavior exactly.
 
-## Phase 1 — Renderer transport shim
+## Phase 1 — Renderer transport shim — **LANDED 2026-10-03**
+(`src/lib/bridge.ts` shim + `ConnectScreen`, `build:web`/`dev:web`,
+CSP widened only in the web config, feature gating, and
+`scripts/test-bridge.mjs` — a 5-step live auth-flow test wired into CI plus
+a Chrome-headless render smoke of `dist-web`.)
 
 | Item | Detail |
 |------|--------|

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { LayoutDashboard, ArrowUpDown, FolderSync, Settings, HardDrive, MessageSquare } from 'lucide-react'
 import { clsx } from 'clsx'
+import { IS_COMPANION } from '../../lib/bridge'
 import { useDeviceStore } from '../../stores/deviceStore'
 import { useAppStore } from '../../stores/appStore'
 
@@ -17,7 +18,11 @@ const navItems = [
   { id: 'sync', label: 'Sync Folders', icon: FolderSync },
   { id: 'storage', label: 'Storage', icon: HardDrive },
   { id: 'settings', label: 'Settings', icon: Settings },
-]
+].filter((item) =>
+  // Companion (Phase 1): desktop-path features only — sync folders and
+  // storage browse need local paths the phone cannot provide.
+  IS_COMPANION ? item.id !== 'sync' && item.id !== 'storage' : true
+)
 
 export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
   const peerCount = useDeviceStore((s) => s.devices.filter((d) => d.status === 'connected').length)

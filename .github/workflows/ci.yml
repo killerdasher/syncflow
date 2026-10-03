@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '24'  # bridge test needs the built-in WebSocket (Node >= 22)
 
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt pyinstaller
@@ -39,7 +39,12 @@ jobs:
       - name: Build (electron-vite)
         run: npx electron-vite build
 
-      - name: Security suite (63 checks, fresh live instances)
+      - name: Companion web build + bridge auth flow (Phase 1)
+        run: |
+          npx vite build --config vite.web.config.ts
+          node scripts/test-bridge.mjs
+
+      - name: Security suite (102 checks, fresh live instances)
         run: backend/tests/run_all.sh
 
       - name: Build frozen backend (PyInstaller)

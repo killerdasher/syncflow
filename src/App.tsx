@@ -16,6 +16,8 @@ import { SettingsPage } from './components/Settings/SettingsPage'
 import { ChatPage } from './components/Chat/ChatPage'
 import { useWebSocket } from './hooks/useWebSocket'
 import { useSyncEngine } from './hooks/useSyncEngine'
+import { IS_COMPANION } from './lib/bridge'
+import { ConnectScreen } from './components/Connect/ConnectScreen'
 import { useTransferStore } from './stores/transferStore'
 import { useDeviceStore } from './stores/deviceStore'
 import { useSettingsStore } from './stores/settingsStore'
@@ -38,6 +40,7 @@ function App() {
   const deviceName = useSettingsStore((s) => s.settings.deviceName)
   const navTarget = useAppStore((s) => s.navTarget)
   const clearNavigate = useAppStore((s) => s.clearNavigate)
+  const companionAuthed = useAppStore((s) => s.companionAuthed)
 
   // Notification click (or any other code) may request a page switch
   useEffect(() => {
@@ -230,18 +233,22 @@ function App() {
             className="space-y-6"
           >
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-frost-100">Send Files</h2>
-                  <p className="text-sm text-frost-300">
-                    Pick files to send — drag &amp; drop below or click the button
-                  </p>
-                </div>
-                <GlowButton icon={<Send size={14} />} onClick={handleQuickSend}>
-                  Send Files
-                </GlowButton>
-              </div>
-              <FileDropZone onFilesSelected={handleFilesSelected} />
+              {!IS_COMPANION && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold text-frost-100">Send Files</h2>
+                      <p className="text-sm text-frost-300">
+                        Pick files to send — drag &amp; drop below or click the button
+                      </p>
+                    </div>
+                    <GlowButton icon={<Send size={14} />} onClick={handleQuickSend}>
+                      Send Files
+                    </GlowButton>
+                  </div>
+                  <FileDropZone onFilesSelected={handleFilesSelected} />
+                </>
+              )}
             </div>
             <DeviceGrid onSendToDevice={handleSendToDevice} onAddDevice={() => setAddDeviceOpen(true)} />
           </motion.div>
@@ -255,7 +262,7 @@ function App() {
             exit={{ opacity: 0 }}
             className="h-full"
           >
-            <TransferList onSendFiles={handleQuickSend} />
+            <TransferList onSendFiles={IS_COMPANION ? undefined : handleQuickSend} />
           </motion.div>
         )
       case 'chat':
@@ -308,10 +315,16 @@ function App() {
     }
   }
 
+  // Companion mode: nothing to show until the backend handshake succeeded
+  // (all hooks above have already run — this is a render-only branch).
+  if (IS_COMPANION && !companionAuthed) {
+    return <ConnectScreen />
+  }
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden gradient-bg">
       <AnimatedBackground />
-      <TitleBar />
+      {!IS_COMPANION && <TitleBar />}
       <div className="flex flex-1 overflow-hidden relative z-10">
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
         <main className="flex-1 overflow-y-auto p-6">
@@ -332,7 +345,7 @@ function App() {
         }}
         onAddDevice={() => setAddDeviceOpen(true)}
       />
-      {windowDragOver && (
+      {windowDragOver && !IS_COMPANION && (
         <div className="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-black/40">
           <div className="border-2 border-dashed border-cyber-teal rounded-3xl px-14 py-10 text-center bg-navy-900/90 shadow-2xl">
             <p className="text-lg font-semibold text-frost-100">Drop files to send</p>
