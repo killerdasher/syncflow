@@ -349,3 +349,15 @@ class PeerTrustStore:
             self._save()
             return True
         return False
+
+    def promote(self, old_key: str, new_key: str) -> bool:
+        """Move a pin from a legacy alias (e.g. 'ip:port') to the canonical
+        key ('ip'). No-op when the old record doesn't exist; if both exist,
+        the canonical record wins and the duplicate alias is dropped."""
+        if old_key == new_key or old_key not in self._peers:
+            return False
+        rec = self._peers.pop(old_key)
+        if new_key not in self._peers:
+            self._peers[new_key] = rec
+        self._save()
+        return True

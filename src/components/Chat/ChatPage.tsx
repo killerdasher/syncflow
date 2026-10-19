@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, Lock, Hash, ShieldCheck, Smartphone, AlertTriangle } from 'lucide-react'
+import { Send, Lock, Hash, ShieldCheck, Smartphone, AlertTriangle, Clock, CheckCheck, RotateCcw } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
@@ -61,6 +61,16 @@ export function ChatPage() {
       e.preventDefault()
       handleSend()
     }
+  }
+
+  const handleResend = async (msg: ChatMessage) => {
+    if (!window.electronAPI) return
+    const payload: Record<string, unknown> = { type: 'chat:send', text: msg.text }
+    if (settings.deviceName) payload.fromDevice = settings.deviceName
+    // Drop the failed bubble so the retry doesn't double up in the list.
+    const store = useChatStore.getState()
+    useChatStore.setState({ messages: store.messages.filter((m) => m.id !== msg.id) })
+    await window.electronAPI.send(payload)
   }
 
   const formatTime = (ts: number) => {
@@ -143,9 +153,40 @@ export function ChatPage() {
                     <AlertTriangle size={9} />
                     <span className="text-[9px]">Not sent — backend offline</span>
                   </div>
+                ) : msg.self && msg.status === 'failed' ? (
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <span className="flex items-center gap-1 text-red-400" title={msg.failReason}>
+                      <AlertTriangle size={9} />
+                      <span className="text-[9px]">{msg.failReason || 'Not delivered'}</span>
+                    </span>
+                    <button
+                      onClick={() => handleResend(msg)}
+                      className="flex items-center gap-1 text-[9px] font-medium text-frost-300 hover:text-cyber-teal transition-colors underline underline-offset-2"
+                    >
+                      <RotateCcw size={8} />
+                      Retry
+                    </button>
+                  </div>
+                ) : msg.self && msg.status === 'pending' ? (
+                  <div className="flex items-center gap-1.5 mt-1.5 text-frost-400">
+                    <Clock size={9} className="animate-pulse" />
+                    <span className="text-[9px]">Sending…</span>
+                    {REAL_HASH.test(msg.hash) && (
+                      <span className="text-[9px] font-mono truncate">
+                        {msg.hash.slice(0, 16)}…
+                      </span>
+                    )}
+                  </div>
                 ) : REAL_HASH.test(msg.hash) ? (
                   <div className="flex items-center gap-1 mt-1.5">
-                    <ShieldCheck size={9} className="text-green-400" />
+                    {msg.self && msg.status === 'delivered' ? (
+                      <>
+                        <CheckCheck size={9} className="text-green-400" />
+                        <span className="text-[9px] text-green-400">Delivered</span>
+                      </>
+                    ) : (
+                      <ShieldCheck size={9} className="text-green-400" />
+                    )}
                     <span className="text-[9px] font-mono text-frost-400 truncate">
                       {msg.hash.slice(0, 16)}…
                     </span>

@@ -42,10 +42,22 @@ def lan_ips():
     return sorted(ips)
 
 
+def _listen_table() -> list:
+    """Local listening-socket table as plain lines ('ss -ltn' equivalent).
+    POSIX uses ss; Windows falls back to 'netstat -ano' (LISTENING rows)."""
+    if os.name == "nt":
+        out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True).stdout
+        return [l.strip() for l in out.splitlines() if "LISTENING" in l]
+    return [
+        l.strip()
+        for l in subprocess.run(["ss", "-ltn"], capture_output=True, text=True).stdout.splitlines()
+    ]
+
+
 def a1_bind_posture():
-    out = subprocess.run(["ss", "-ltn"], capture_output=True, text=True).stdout
-    ws_lines = [l.strip() for l in out.splitlines() if ":18993" in l]
-    tcp_lines = [l.strip() for l in out.splitlines() if ":19974" in l]
+    lines = _listen_table()
+    ws_lines = [l for l in lines if ":18993" in l]
+    tcp_lines = [l for l in lines if ":19974" in l]
     ok(
         "A1 WS control plane listens on loopback only",
         len(ws_lines) >= 1
@@ -221,29 +233,35 @@ def a8_state_permissions():
 
     bad = []
     checked = 0
+    posix_modes = os.name != "nt"  # Windows can't express POSIX mode bits
     for path, want in file_expect:
         if not os.path.exists(path):
             if path.endswith("peers.json"):
                 continue  # trust file only exists once a peer was pinned
             bad.append(f"missing {path}")
             continue
-        mode = stat.S_IMODE(os.stat(path).st_mode)
         checked += 1
+        if not posix_modes:
+            continue
+        mode = stat.S_IMODE(os.stat(path).st_mode)
         if mode != want:
             bad.append(f"{path} mode={oct(mode)} want={oct(want)}")
     for path in dir_expect:
         if not os.path.isdir(path):
             bad.append(f"missing dir {path}")
             continue
-        mode = stat.S_IMODE(os.stat(path).st_mode)
         checked += 1
+        if not posix_modes:
+            continue
+        mode = stat.S_IMODE(os.stat(path).st_mode)
         if mode & 0o077:
             bad.append(f"{path} mode={oct(mode)} leaks group/other")
 
     ok(
         "A8 state files owner-only (keys/chat/trust 0600, dirs 0700)",
         checked >= 3 and not bad,
-        f"checked={checked} bad={bad}",
+        f"checked={checked} bad={bad}"
+        + ("" if posix_modes else " [existence-only: mode bits POSIX-only]"),
     )
 
 

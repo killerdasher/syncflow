@@ -83,6 +83,10 @@ export interface ChatMessage {
   timestamp: number
   hash: string
   self: boolean
+  /** Delivery state for own messages (driven by chat:delivered/failed pushes) */
+  status?: 'pending' | 'delivered' | 'failed'
+  /** Why delivery failed (chat:failed reason) */
+  failReason?: string
 }
 
 declare global {

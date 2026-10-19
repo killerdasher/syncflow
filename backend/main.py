@@ -49,6 +49,20 @@ class SyncFlowBackend:
             os.path.dirname(os.path.abspath(self.identity.storage_dir)), "chat_log.json"
         )
         self._load_chat_log()
+        # Manually added peers (peers:add) — chat relays fan out to these even
+        # when mDNS discovery is one-way or blocked (classic firewall asymmetry).
+        self._known_peers_path = os.path.join(os.path.dirname(self._chat_path), "known_peers.json")
+        self._known_peers: dict[str, dict] = {}
+        self._load_known_peers()
+        # Outbound chat outbox: message id -> {text, created, targets:{addr:...}}.
+        # Failed deliveries are retried with backoff until TTL (see _chat_worker).
+        self._chat_outbox: dict[str, dict] = {}
+        # One tick at a time: the worker and on-demand triggers share it.
+        self._chat_tick_lock = asyncio.Lock()
+        # Incoming message ids seen recently — relays arrive over multiple
+        # paths (direct + multi-hop), so duplicates must be dropped once.
+        self._seen_chat_ids: dict[str, float] = {}
+        self._chat_worker_task: Optional[asyncio.Task] = None
 
     def _load_chat_log(self):
         try:
@@ -74,6 +88,34 @@ class SyncFlowBackend:
         except Exception:
             pass
 
+    def _load_known_peers(self):
+        try:
+            if os.path.exists(self._known_peers_path):
+                with open(self._known_peers_path, "r") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    for addr, peer in data.items():
+                        if (
+                            isinstance(peer, dict)
+                            and isinstance(peer.get("ip"), str)
+                            and isinstance(peer.get("port"), int)
+                            and 0 < peer["port"] < 65536
+                        ):
+                            self._known_peers[str(addr)[:80]] = peer
+        except Exception:
+            self._known_peers = {}
+
+    def _save_known_peers(self):
+        try:
+            os.makedirs(os.path.dirname(self._known_peers_path), exist_ok=True, mode=0o700)
+            # Address book is sensitive: owner-only (0600), same as chat_log.
+            fd = os.open(self._known_peers_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(self._known_peers, f, indent=2)
+            os.chmod(self._known_peers_path, 0o600)
+        except Exception:
+            pass
+
     def _register_handlers(self):
         if not self.ws_bridge:
             return
@@ -89,6 +131,9 @@ class SyncFlowBackend:
         self.ws_bridge.on("settings:apply", self._handle_settings)
         self.ws_bridge.on("peers:list", self._handle_peers_list)
         self.ws_bridge.on("peers:forget", self._handle_peers_forget)
+        self.ws_bridge.on("peers:add", self._handle_peers_add)
+        self.ws_bridge.on("peers:remove", self._handle_peers_remove)
+        self.ws_bridge.on("diag:probe", self._handle_diag_probe)
         self.ws_bridge.on("transfer:approve", self._handle_approval)
         self.ws_bridge.on("transfer:decline", self._handle_approval)
 
@@ -233,22 +278,156 @@ class SyncFlowBackend:
         if self.ws_bridge:
             await self.ws_bridge.send_message(message)
 
-        # Fan out to every discovered peer (best-effort, non-blocking)
-        self._relay_chat(text)
+        # Fan out to every relay target (mDNS + manually added peers). The
+        # outbox retries with backoff and reports chat:delivered/failed.
+        self._relay_chat(message["id"], text)
 
         return {"type": "chat:ack", "messageId": message["id"], "hash": msg_hash}
 
-    def _relay_chat(self, text: str):
-        devices = [d for d in self.mdns.get_found_devices()
-                   if d.get("id") and d["id"] != self.device_id and d.get("ip") and d.get("port")]
-        for dev in devices:
-            asyncio.ensure_future(self._relay_chat_to(dev["ip"], int(dev["port"]), text, dev["id"]))
+    def _chat_targets(self) -> dict[str, dict]:
+        """Relay targets = mDNS-discovered ∪ manually added peers.
 
-    async def _relay_chat_to(self, ip: str, port: int, text: str, expected_device_id: str):
-        try:
-            await self.transfer_engine.send_chat(ip, text, target_port=port, expected_device_id=expected_device_id)
-        except Exception as e:
-            print(f"Chat relay error to {ip}: {san(e, 120)}", flush=True)
+        The previous implementation only used mDNS, so manually added
+        devices (or one-way mDNS behind a firewall) silently never got
+        messages — files worked because they carry an explicit targetIp.
+        """
+        targets: dict[str, dict] = {}
+        for dev in self.mdns.get_found_devices():
+            if not dev.get("id") or dev["id"] == self.device_id or not dev.get("ip") or not dev.get("port"):
+                continue
+            addr = f"{dev['ip']}:{int(dev['port'])}"
+            targets[addr] = {
+                "ip": dev["ip"],
+                "port": int(dev["port"]),
+                "deviceId": dev["id"],
+                "name": str(dev.get("name", ""))[:64],
+            }
+        for addr, peer in self._known_peers.items():
+            if peer.get("deviceId") and peer["deviceId"] == self.device_id:
+                continue  # never relay to ourselves
+            if addr not in targets:
+                targets[addr] = {
+                    "ip": peer["ip"],
+                    "port": int(peer["port"]),
+                    "deviceId": peer.get("deviceId"),
+                    "name": str(peer.get("name", ""))[:64],
+                }
+        return targets
+
+    def _relay_chat(self, msg_id: str, text: str):
+        now = time.time()
+        targets = self._chat_targets()
+        entry = {
+            "text": text,
+            "created": now,
+            "reportedFailed": False,
+            "orphan": not targets,  # born with no target: may self-heal when a peer appears
+            "targets": {
+                addr: {**t, "attempts": 0, "next": now} for addr, t in targets.items()
+            },
+        }
+        self._chat_outbox[msg_id] = entry
+        if targets:
+            asyncio.ensure_future(self._chat_outbox_tick())
+
+    async def _report_chat_failed(self, msg_id: str, target: Optional[str], reason: str):
+        entry = self._chat_outbox.get(msg_id)
+        if entry is not None and entry.get("reportedFailed") and target is None:
+            return  # no-target failure already reported once for this message
+        if self._chat_outbox.get(msg_id) is entry and target is None:
+            entry["reportedFailed"] = True
+        if self.ws_bridge:
+            await self.ws_bridge.send_message(
+                {"type": "chat:failed", "messageId": msg_id, "target": target, "reason": san(reason, 160)}
+            )
+
+    async def _report_chat_delivered(self, msg_id: str, target: str):
+        if self.ws_bridge:
+            await self.ws_bridge.send_message(
+                {"type": "chat:delivered", "messageId": msg_id, "target": target}
+            )
+
+    def _attach_target_to_outbox(self, ip: str, port: int, device_id: Optional[str], name: str):
+        """A peer became visible (mDNS found or peers:add): unblock pending
+        deliveries to it, and give orphaned messages a target to heal on."""
+        addr = f"{ip}:{port}"
+        for entry in list(self._chat_outbox.values()):
+            t = entry.get("targets", {}).get(addr)
+            if t is not None:
+                t["next"] = 0  # retry immediately
+            elif entry.get("orphan"):
+                entry["targets"][addr] = {
+                    "ip": ip, "port": int(port), "deviceId": device_id,
+                    "name": str(name)[:64], "attempts": 0, "next": 0,
+                }
+                entry["orphan"] = False
+
+    # Retry schedule: 5s, 10s, 30s, 60s, then every 60s. ~1440 attempts/day,
+    # capped by CHAT_OUTBOX_TTL (24h) so a dead peer can't queue forever.
+    _CHAT_RETRY_BACKOFF = (5.0, 10.0, 30.0, 60.0)
+    _CHAT_OUTBOX_TTL = 24 * 3600.0
+    _CHAT_MAX_ATTEMPTS = 1440
+
+    async def _chat_outbox_tick(self):
+        if self._chat_tick_lock.locked():
+            return  # a tick is already running; it will see our entries
+        async with self._chat_tick_lock:
+            await self._chat_outbox_tick_inner()
+
+    async def _chat_outbox_tick_inner(self):
+        now = time.time()
+        for msg_id, entry in list(self._chat_outbox.items()):
+            if now - entry.get("created", now) > self._CHAT_OUTBOX_TTL:
+                for addr in entry.get("targets", {}):
+                    await self._report_chat_failed(msg_id, addr, "Delivery timed out")
+                self._chat_outbox.pop(msg_id, None)
+                continue
+            for addr, t in list(entry.get("targets", {}).items()):
+                if t.get("next", 0) > now:
+                    continue
+                ok = False
+                try:
+                    ok = await self.transfer_engine.send_chat(
+                        t["ip"], entry["text"], target_port=t["port"],
+                        expected_device_id=t.get("deviceId") or None,
+                    )
+                except Exception as e:
+                    print(f"Chat relay error to {addr}: {san(e, 120)}", flush=True)
+                if ok:
+                    entry["targets"].pop(addr, None)
+                    await self._report_chat_delivered(msg_id, addr)
+                else:
+                    t["attempts"] = int(t.get("attempts", 0)) + 1
+                    if t["attempts"] >= self._CHAT_MAX_ATTEMPTS:
+                        entry["targets"].pop(addr, None)
+                        await self._report_chat_failed(
+                            msg_id, addr, f"Delivery failed after {t['attempts']} attempts"
+                        )
+                    else:
+                        backoff = self._CHAT_RETRY_BACKOFF[
+                            min(t["attempts"] - 1, len(self._CHAT_RETRY_BACKOFF) - 1)
+                        ]
+                        t["next"] = now + backoff
+            if self._chat_outbox.get(msg_id) is not entry:
+                continue
+            if entry.get("orphan") and not entry.get("targets"):
+                # Born without any relay target. Give discovery a grace window
+                # (mDNS browse needs a second or two), then tell the sender —
+                # but keep the entry so a later peers:add/find can still heal it.
+                if not entry.get("reportedFailed") and now - entry.get("created", now) > 60:
+                    await self._report_chat_failed(msg_id, None, "No known devices to deliver to")
+            elif not entry.get("targets"):
+                self._chat_outbox.pop(msg_id, None)
+
+    async def _chat_worker(self):
+        """Background retry loop: queued messages keep trying for life."""
+        while self._running:
+            await asyncio.sleep(2.0)
+            try:
+                if self._chat_outbox:
+                    await self._chat_outbox_tick()
+            except Exception as e:
+                print(f"Chat worker error: {san(e, 120)}", flush=True)
 
     async def _on_security_event(self, event: dict):
         """Broadcast security events (e.g., identity change) to all WS clients."""
@@ -260,6 +439,19 @@ class SyncFlowBackend:
             })
 
     async def _on_incoming_chat(self, message: dict):
+        # Multi-path relay: the same message can arrive directly AND via
+        # another peer's fan-out. Dedup by id so the UI never shows doubles.
+        msg_id = message.get("id")
+        if isinstance(msg_id, str) and msg_id:
+            now = time.time()
+            if msg_id in self._seen_chat_ids:
+                return
+            self._seen_chat_ids[msg_id] = now
+            if len(self._seen_chat_ids) > 512:
+                cutoff = now - 600
+                self._seen_chat_ids = {
+                    k: v for k, v in self._seen_chat_ids.items() if v >= cutoff
+                }
         self._message_log.append(message)
         if len(self._message_log) > 500:
             self._message_log = self._message_log[-500:]
@@ -382,6 +574,80 @@ class SyncFlowBackend:
             "peers": [self._peer_view(p) for p in remaining],
         }
 
+    @staticmethod
+    def _parse_peer_addr(data: dict) -> tuple[Optional[str], int, Optional[str]]:
+        """Validate {ip, port} for peers:add/remove. Returns (ip, port, error)."""
+        ip = data.get("ip", "")
+        if not isinstance(ip, str) or not ip or not TARGET_HOST_RE.match(ip) or ":" in ip:
+            return None, 0, "Invalid target address"
+        try:
+            port = int(data.get("port") or 18974)
+        except (TypeError, ValueError):
+            return None, 0, "Invalid target port"
+        if not (0 < port < 65536):
+            return None, 0, "Invalid target port"
+        return ip, port, None
+
+    async def _handle_peers_add(self, data: dict) -> dict:
+        ip, port, err = self._parse_peer_addr(data)
+        if err:
+            return {"type": "error", "error": err}
+        device_id = data.get("deviceId") or None
+        if device_id is not None and (
+            not isinstance(device_id, str) or not TRANSFER_ID_RE.match(device_id)
+        ):
+            return {"type": "error", "error": "Invalid device id"}
+        name = data.get("name")
+        name = san(name, 64) if isinstance(name, str) else ""
+
+        addr = f"{ip}:{port}"
+        self._known_peers[addr] = {
+            "ip": ip,
+            "port": port,
+            "deviceId": device_id,
+            "name": name,
+            "addedAt": time.time(),
+        }
+        self._save_known_peers()
+        # A peer that just became reachable may unblock queued messages.
+        self._attach_target_to_outbox(ip, port, device_id, name)
+        return {"type": "peers:added", "peer": self._known_peers[addr]}
+
+    async def _handle_peers_remove(self, data: dict) -> dict:
+        ip, port, err = self._parse_peer_addr(data)
+        if err:
+            return {"type": "error", "error": err}
+        addr = f"{ip}:{port}"
+        success = self._known_peers.pop(addr, None) is not None
+        if success:
+            self._save_known_peers()
+        return {"type": "peers:removed", "addr": addr, "success": success}
+
+    async def _handle_diag_probe(self, data: dict) -> dict:
+        """Connection doctor: plain TCP reachability + latency to a peer."""
+        ip, port, err = self._parse_peer_addr(data)
+        if err:
+            return {"type": "diag:result", "ok": False, "error": err}
+        started = time.monotonic()
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, port), 3.0)
+            latency_ms = round((time.monotonic() - started) * 1000, 1)
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return {"type": "diag:result", "ok": True, "ip": ip, "port": port, "latencyMs": latency_ms}
+        except Exception as e:
+            return {
+                "type": "diag:result",
+                "ok": False,
+                "ip": ip,
+                "port": port,
+                "latencyMs": None,
+                "error": san(e, 120),
+            }
+
     async def _on_transfer_progress(self, task):
         if self.ws_bridge and self.ws_bridge.loop:
             file_list = [
@@ -447,6 +713,10 @@ class SyncFlowBackend:
 
         await self.tcp_server.start()
 
+        # Chat retry worker: drains the outbox with backoff so messages
+        # survive transient peer absence / firewall hiccups.
+        self._chat_worker_task = asyncio.ensure_future(self._chat_worker())
+
         try:
             await self.ws_bridge.start()
         except Exception as e:
@@ -457,10 +727,27 @@ class SyncFlowBackend:
             return  # never surface our own advertisement as a peer
         print(f"Device found: {device_info['name']} ({device_info['ip']})", flush=True)
         if self.ws_bridge and self.ws_bridge.loop:
+            # zeroconf thread → hop onto the event loop: unblock/attach any
+            # queued chat deliveries for this peer before announcing it.
             asyncio.run_coroutine_threadsafe(
-                self.ws_bridge.send_message({"type": "device:connected", "device": device_info}),
-                self.ws_bridge.loop,
+                self._on_peer_visible(device_info), self.ws_bridge.loop,
             )
+
+    async def _on_peer_visible(self, device_info: dict):
+        try:
+            if device_info.get("ip") and device_info.get("port"):
+                self._attach_target_to_outbox(
+                    str(device_info["ip"]),
+                    int(device_info["port"]),
+                    device_info.get("id"),
+                    str(device_info.get("name", "")),
+                )
+                if self._chat_outbox:
+                    asyncio.ensure_future(self._chat_outbox_tick())
+        except Exception as e:
+            print(f"Peer visible error: {san(e, 120)}", flush=True)
+        if self.ws_bridge:
+            await self.ws_bridge.send_message({"type": "device:connected", "device": device_info})
 
     def _on_device_lost(self, device_id):
         print(f"Device lost: {device_id}", flush=True)
@@ -474,6 +761,13 @@ class SyncFlowBackend:
         if not self._running:
             return
         self._running = False
+        if self._chat_worker_task is not None:
+            try:
+                self._chat_worker_task.cancel()
+                await self._chat_worker_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._chat_worker_task = None
         try:
             await self.mdns.unregister()
         except Exception as e:

@@ -59,6 +59,7 @@ export function useWebSocket() {
   const addChatMessage = useChatStore((s) => s.addMessage)
   const setChatMessages = useChatStore((s) => s.setMessages)
   const setSelfId = useChatStore((s) => s.setSelfId)
+  const setMessageStatus = useChatStore((s) => s.setMessageStatus)
 
   const send = useCallback((msg: any) => {
     if (window.electronAPI) {
@@ -235,6 +236,7 @@ export function useWebSocket() {
           }
           break
         case 'chat:message': {
+          const self = msg.deviceId === useChatStore.getState().selfId
           const chatMsg: ChatMessage = {
             id: msg.id,
             fromDevice: msg.fromDevice,
@@ -242,7 +244,9 @@ export function useWebSocket() {
             text: msg.text,
             timestamp: msg.timestamp,
             hash: msg.hash,
-            self: msg.deviceId === useChatStore.getState().selfId,
+            self,
+            // Own messages start pending; chat:delivered/failed flips them.
+            status: self ? 'pending' : undefined,
           }
           addChatMessage(chatMsg)
           if (!chatMsg.self && !notified.has(`chat-${msg.id}`)) {
@@ -251,6 +255,32 @@ export function useWebSocket() {
           }
           break
         }
+        case 'chat:delivered':
+          if (typeof msg.messageId === 'string') {
+            setMessageStatus(msg.messageId, 'delivered')
+          }
+          break
+        case 'chat:failed':
+          if (typeof msg.messageId === 'string') {
+            setMessageStatus(
+              msg.messageId,
+              'failed',
+              typeof msg.reason === 'string' ? msg.reason : 'Delivery failed'
+            )
+          }
+          break
+        case 'diag:result':
+          if (typeof msg.ip === 'string') {
+            useAppStore.getState().setLastDiag({
+              ip: msg.ip,
+              port: Number(msg.port) || 18974,
+              ok: Boolean(msg.ok),
+              latencyMs: typeof msg.latencyMs === 'number' ? msg.latencyMs : null,
+              ...(typeof msg.error === 'string' ? { error: msg.error } : {}),
+              at: Date.now(),
+            })
+          }
+          break
         case 'chat:history':
           if (Array.isArray(msg.messages)) {
             const selfId = useChatStore.getState().selfId
@@ -262,6 +292,8 @@ export function useWebSocket() {
               timestamp: m.timestamp,
               hash: m.hash,
               self: m.deviceId === selfId,
+              // History is settled: never re-open old messages as "sending".
+              status: 'delivered' as const,
             })))
           }
           break
@@ -282,6 +314,13 @@ export function useWebSocket() {
     window.electronAPI.send({ type: 'devices:list' })
     window.electronAPI.send({ type: 'peers:list' })
     window.electronAPI.send({ type: 'transfers:list' })
+    // Register persisted manual devices with the backend so chat relays
+    // reach them (mDNS-only fan-out silently dropped these messages).
+    for (const d of useDeviceStore.getState().devices) {
+      if (d.manual && d.ip) {
+        window.electronAPI.send({ type: 'peers:add', ip: d.ip, port: 18974, name: d.name })
+      }
+    }
     applySettings()
 
     return () => {
@@ -289,7 +328,7 @@ export function useWebSocket() {
       window.electronAPI.removeStatusListener()
       connected.current = false
     }
-  }, [addDevice, updateDevice, updateTransfer, addTransfer, addChatMessage, setChatMessages, setSelfId])
+  }, [addDevice, updateDevice, updateTransfer, addTransfer, addChatMessage, setChatMessages, setSelfId, setMessageStatus])
 
   return { send, connected: connected.current }
 }

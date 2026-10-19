@@ -61,6 +61,9 @@ export function AddDeviceModal({ isOpen, onClose }: AddDeviceModalProps) {
     }
 
     addDevice(device)
+    // Register with the backend relay too — without this, chat messages
+    // (unlike file sends) never reached manually added devices.
+    window.electronAPI?.send({ type: 'peers:add', ip: trimmedIp, port: 18974, name: device.name })
     reset()
     onClose()
   }

@@ -1,13 +1,23 @@
 import asyncio
+import hashlib
 import socket
 import platform
 import uuid
 from typing import Callable, Optional
 
 
-def get_mac_address() -> str:
-    mac = uuid.getnode()
-    return ':'.join(f'{(mac >> (8 * i)) & 0xFF:02X}' for i in reversed(range(6)))
+def pseudo_mac(device_id: str) -> str:
+    """Stable, locally-administered pseudonym in MAC format.
+
+    Derived from the device id (a hash of the public signing key), never from
+    the hardware NIC: the real MAC must not leak over mDNS, where any LAN
+    observer could OUI-lookup the vendor and track the machine across
+    networks. The locally-administered bit is set so the value is
+    unambiguously not a burned-in address.
+    """
+    digest = bytearray(hashlib.sha256(str(device_id).encode()).digest()[:6])
+    digest[0] = (digest[0] & 0xFE) | 0x02  # clear multicast, set local
+    return ":".join(f"{b:02X}" for b in digest)
 
 
 def get_local_ip() -> str:
@@ -39,11 +49,16 @@ class DeviceIdentity:
     def __init__(self, name: Optional[str] = None):
         self.id = str(uuid.uuid4())
         self.name = name or socket.gethostname()
-        self.mac = get_mac_address()
         self.ip = get_local_ip()
         self.os = get_os_type()
         self.icon = get_device_icon(self.os)
         self.port = 18974
+
+    @property
+    def mac(self) -> str:
+        # Derived from the *current* id: MDNSDiscovery replaces id with the
+        # stable device id after construction, and this must follow.
+        return pseudo_mac(self.id)
 
     def to_dict(self) -> dict:
         return {

@@ -55,11 +55,23 @@ SRC_SHA = hashlib.sha256(SRC).hexdigest()
 def _free_ports(*ports):
     for port in ports:
         try:
-            out = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True).stdout
-            for line in out.splitlines():
-                if f":{port} " in line or line.rstrip().endswith(f":{port}"):
-                    pid = line.split("pid=", 1)[1].split(",")[0].split(")")[0]
-                    os.kill(int(pid), 15)
+            if os.name == "nt":
+                out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True).stdout
+                for line in out.splitlines():
+                    if "LISTENING" not in line:
+                        continue
+                    cols = line.split()
+                    if not cols or not cols[1].rsplit(":", 1)[-1] == str(port):
+                        continue
+                    pid = int(cols[-1])
+                    if pid > 0 and pid != os.getpid():
+                        os.kill(pid, 15)
+            else:
+                out = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True).stdout
+                for line in out.splitlines():
+                    if f":{port} " in line or line.rstrip().endswith(f":{port}"):
+                        pid = line.split("pid=", 1)[1].split(",")[0].split(")")[0]
+                        os.kill(int(pid), 15)
         except (ProcessLookupError, ValueError, IndexError):
             pass
     time.sleep(0.5)
@@ -419,4 +431,4 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--list":
         print(10)
         sys.exit(0)
-    asyncio.get_event_loop().run_until_complete(run_download_tests())
+    asyncio.run(run_download_tests())

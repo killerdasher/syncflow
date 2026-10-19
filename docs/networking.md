@@ -89,6 +89,35 @@ prompt on first run — allow incoming for **SyncFlow**. No other config needed.
 | Chat/files work one direction only | Inbound TCP 18974 blocked on the receiving device |
 | Works, then stops after IP change | Re-add device with **Add Device** (manual IP) — pins are keyed by IP |
 | mDNS works but manual IP doesn't | Firewall rule missing (rules above) |
+| Message stuck *Sending…* | Target unreachable — it retries automatically (24h); click the device's **Test connection** for the concrete error |
+| Message *Delivery failed* | Target refused TCP 18974 after all retries — open the firewall rules above on that machine, then **Retry** |
+
+### Chat sends but the other side never sees it
+
+Classic split: **file transfers work, chat doesn't** (or chat works only one
+way). Chat travels the same port as files but opens a *fresh connection per
+message*, so it is the first thing to break when:
+
+1. **The receiver's firewall blocks inbound 18974** — run the ufw/firewalld
+   rules above on the *receiving* machine and use **Test connection** on the
+   device card to verify.
+2. **The peer was added manually (by IP)** — older versions relayed chat only
+   to mDNS-discovered devices. SyncFlow now registers manual peers
+   (`peers:add`) and queues every undelivered message in a backend outbox with
+   automatic retry, so the chat arrives as soon as the path opens.
+3. **mDNS is blocked (UDP 5353) but you added the device by IP** — discovery
+   shows nothing, yet chat still works through the manual peer list.
+
+Quick check on the receiving machine:
+
+```bash
+sudo ss -ltnp | grep 18974     # backend listening on 0.0.0.0, not just 127.0.0.1
+sudo ufw status                # 18974/tcp allowed from your LAN subnet
+```
+
+If the app reports *Not sent — backend offline*, the local backend itself is
+down — start the app (or `python backend/main.py`) and the outbox will flush
+pending messages automatically.
 
 > SyncFlow pins peer keys trust-on-first-use (Settings → Pinned Devices).
 > If a device is legitimately reinstalled, use **Forget** on the other side

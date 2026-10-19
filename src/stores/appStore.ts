@@ -45,6 +45,16 @@ interface AppState {
   securityToasts: SecurityToast[]
   addSecurityToast: (key: string, reason: string) => void
   dismissSecurityToast: (id: number) => void
+  /** Latest connection-doctor result (diag:probe), null = none yet */
+  lastDiag: {
+    ip: string
+    port: number
+    ok: boolean
+    latencyMs: number | null
+    error?: string
+    at: number
+  } | null
+  setLastDiag: (d: AppState['lastDiag']) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -73,4 +83,6 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({
       securityToasts: state.securityToasts.filter((t) => t.id !== id),
     })),
+  lastDiag: null,
+  setLastDiag: (d) => set({ lastDiag: d }),
 }))

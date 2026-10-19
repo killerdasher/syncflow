@@ -23,7 +23,7 @@ Vulnerability disclosure: [SECURITY.md](../SECURITY.md).
 
 **Method:** live attacks against freshly started backend instances (two per
 run) + source review of every listening socket + dependency auditing.
-Environment: Parrot/Linux dev machine; CI replicates the suite on
+Environment: Linux dev machine; CI replicates the suite on
 Ubuntu, Windows and macOS.
 
 ## 2. Automated evidence (152 checks)

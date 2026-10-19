@@ -87,7 +87,7 @@ tooling exists (connect to a LAN-mode desktop).
 | Signing | Generate an Android keystore once; store **base64 keystore + passwords as GitHub Actions secrets** (Encrypted secrets). Back up the keystore **outside** GitHub — losing it = cannot update the app. Alternative: publish unsigned/debug-signed APKs for v0.x and defer real signing (updates then require reinstall with same key — decide before first install in the wild) |
 | Distribution | **GitHub Releases first** (sideload: Settings → install unknown apps). Upload via `gh release upload`, add to `SHA256SUMS.txt`, extend the attestation step (`subject-path` already globs `release-files/**` — include the APK) |
 | Play Store (later, optional) | $25 one-time, AAB (`bundleRelease`), Play App Signing (upload key managed by Google), Privacy Policy URL + Data-safety form (LAN-only, no data collection — easy), store listing screenshots |
-| Device testing | Manual install on your phone (Parrot↔phone on same LAN); optional emulator screenshot job in CI later |
+| Device testing | Manual install on your phone (laptop↔phone on same LAN); optional emulator screenshot job in CI later |
 
 Landed: `capacitor.config.ts` + committed `android/` (minSdk 26, cleartext
 network-security config, `allowBackup=false`), branded icons via

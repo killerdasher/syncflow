@@ -563,10 +563,23 @@ class TransferEngine:
                 if actual_id != expected_device_id:
                     print(f"Chat: peer identity mismatch for {target_ip}", flush=True)
                     return False
-            pin_ok, pin_why = self.trust.check(f"{target_ip}:{target_port}", response.get("signingPub", ""))
+            # Pin key strategy: one record per DEVICE on a LAN — the receive
+            # path keys pins by plain ip, so outbound must too, or every
+            # peer shows up twice (ip + ip:port) in peers:list. Legacy
+            # ip:port records are promoted to the canonical ip key.
+            # Loopback is the exception: multiple distinct services share
+            # 127.0.0.1 there (tests, side-by-side instances), so its pins
+            # stay per ip:port and never collide with a same-host receive pin.
+            is_loopback = target_ip == "::1" or target_ip.startswith("127.")
+            if is_loopback:
+                pin_key = f"{target_ip}:{target_port}"
+            else:
+                pin_key = target_ip
+                self.trust.promote(f"{target_ip}:{target_port}", target_ip)
+            pin_ok, pin_why = self.trust.check(pin_key, response.get("signingPub", ""))
             if not pin_ok:
                 if self._security_callback:
-                    await self._security_callback({"type": "identity_changed", "key": f"{target_ip}:{target_port}", "reason": pin_why})
+                    await self._security_callback({"type": "identity_changed", "key": pin_key, "reason": pin_why})
                 print(f"Chat: {san(pin_why)}", flush=True)
                 return False
             if response.get("status") != "accepted":

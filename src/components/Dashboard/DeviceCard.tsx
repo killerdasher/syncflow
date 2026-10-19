@@ -1,10 +1,11 @@
-import { memo } from 'react'
+import { memo, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Monitor, Laptop, Smartphone, Tablet, HelpCircle, Send, Wifi, WifiOff, X } from 'lucide-react'
+import { Monitor, Laptop, Smartphone, Tablet, HelpCircle, Send, Wifi, WifiOff, X, Activity } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Device } from '../../lib/types'
 import { OS_LABELS } from '../../lib/constants'
 import { useDeviceStore } from '../../stores/deviceStore'
+import { useAppStore } from '../../stores/appStore'
 
 interface DeviceCardProps {
   device: Device
@@ -25,6 +26,22 @@ export const DeviceCard = memo(function DeviceCard({ device, onSend, isSelected,
   const Icon = iconMap[device.icon] ?? HelpCircle
   const isConnected = device.status === 'connected'
   const removeDevice = useDeviceStore((s) => s.removeDevice)
+  const lastDiag = useAppStore((s) => s.lastDiag)
+  const [probing, setProbing] = useState(false)
+
+  // Show the result only if the last probe targeted THIS device.
+  const diag = lastDiag && lastDiag.ip === device.ip ? lastDiag : null
+
+  const handleProbe = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setProbing(true)
+    window.electronAPI?.send({ type: 'diag:probe', ip: device.ip, port: 18974 })
+  }
+
+  // Probe results arrive over IPC — clear the spinner when ours lands.
+  useEffect(() => {
+    if (probing && diag && Date.now() - diag.at < 5000) setProbing(false)
+  }, [probing, diag])
 
   return (
     <motion.div
@@ -57,6 +74,8 @@ export const DeviceCard = memo(function DeviceCard({ device, onSend, isSelected,
               onClick={(e) => {
                 e.stopPropagation()
                 removeDevice(device.id)
+                // Keep the backend relay address book in sync too.
+                window.electronAPI?.send({ type: 'peers:remove', ip: device.ip, port: 18974 })
               }}
               aria-label="Remove device"
               title="Remove device"
@@ -105,24 +124,47 @@ export const DeviceCard = memo(function DeviceCard({ device, onSend, isSelected,
       </div>
 
       {device.id !== 'self' && (
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (isConnected) onSend(device)
-          }}
-          disabled={!isConnected}
-          className={clsx(
-            'w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all duration-300',
-            isConnected
-              ? 'bg-cyber-teal/15 text-cyber-teal border border-cyber-teal/30 hover:bg-cyber-teal/25'
-              : 'bg-navy-700/50 text-frost-400 border border-white/5 cursor-not-allowed'
+        <>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (isConnected) onSend(device)
+            }}
+            disabled={!isConnected}
+            className={clsx(
+              'w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all duration-300',
+              isConnected
+                ? 'bg-cyber-teal/15 text-cyber-teal border border-cyber-teal/30 hover:bg-cyber-teal/25'
+                : 'bg-navy-700/50 text-frost-400 border border-white/5 cursor-not-allowed'
+            )}
+          >
+            <Send size={14} />
+            Send Files
+          </motion.button>
+
+          {/* Connection doctor: TCP reachability + latency to this peer */}
+          <button
+            onClick={handleProbe}
+            className="w-full flex items-center justify-center gap-1.5 mt-2 py-1.5 rounded-lg text-[11px] font-medium text-frost-400 hover:text-frost-200 border border-white/5 hover:border-white/15 bg-white/[0.02] hover:bg-white/5 transition-all"
+          >
+            <Activity size={11} />
+            {probing ? 'Testing…' : 'Test connection'}
+          </button>
+          {diag && (
+            <p
+              className={clsx(
+                'text-[10px] text-center font-mono',
+                diag.ok ? 'text-green-400' : 'text-red-400'
+              )}
+            >
+              {diag.ok
+                ? `Reachable · ${diag.latencyMs ?? '?'} ms`
+                : `Unreachable${diag.error ? ` · ${diag.error}` : ''}`}
+            </p>
           )}
-        >
-          <Send size={14} />
-          Send Files
-        </motion.button>
+        </>
       )}
     </motion.div>
   )

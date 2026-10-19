@@ -7,6 +7,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Chat delivery receipts**: every sent message now shows live status —
+  *Sending…* → *Delivered* (green check) or *Delivery failed* with the reason
+  and a one-click **Retry**; the backend pushes `chat:delivered` /
+  `chat:failed` events per target as delivery is actually confirmed
+- **Persistent chat outbox with retry**: outgoing chats are queued backend-side
+  and retried with backoff (5→10→30→60s, 24h TTL) until the target answers,
+  so a temporarily offline or firewalled peer receives the message as soon as
+  it comes back; pending chats self-heal when a device is discovered or added
+- **Manual peers now receive chat** (`peers:add` / `peers:remove`): devices
+  added by IP are registered with the backend, fixing messages that were
+  silently dropped when mDNS discovery failed or the peer was added manually;
+  manual peers persist in `known_peers.json` (owner-only `0600`) and are
+  re-registered automatically on every app start
+- **Connection doctor** (`diag:probe`): *Test connection* button on each
+  device card does a 3s TCP reachability check and shows latency
+  (`Reachable · 4 ms`) or the concrete error (`Unreachable · timeout`) —
+  turns "it doesn't work" into a diagnosable result
+- **Hardware MAC no longer broadcast**: the mDNS TXT `mac` field is now a
+  locally-administered pseudonym derived from the device id — LAN observers
+  can no longer OUI-lookup the NIC vendor or track a machine across networks
 - **Device verification (SAS)**: 16-icon out-of-band fingerprint in
   Settings → Pinned Devices → Verify — compare on both ends to rule out a
   pairing-time man-in-the-middle; hex fingerprint fallback
@@ -31,9 +51,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Error vocabulary pass**: all static `error` literals sentence-cased;
   exhaustive catalogue in `protocol.md §11`; `t_proto` D1/D2 pins code↔doc sync
 - Code of Conduct (Contributor Covenant 2.1)
+- `run_all.ps1`: Windows-native runner for the full 152-check suite (mirrors
+  `run_all.sh`); three new websocket checks (W19 peers add/remove, W20
+  diag:probe, W21 delivery-feedback round trip)
 
 ### Fixed
 
+- **Chat messages never reached manually-added or mDNS-missing devices** —
+  the relay fanned out only over the mDNS discovery list, so a peer added by
+  IP (or one whose mDNS announcement was blocked by the firewall) silently
+  dropped every message while file sends (which carry an explicit target IP)
+  kept working; the relay now targets mDNS ∪ persisted manual peers, and the
+  outbox retries anything that fails
+- **Chat gave no delivery feedback**: `chat:ack` returned before delivery was
+  attempted and failures only reached the backend console — senders now get
+  real per-target `delivered`/`failed` events, and the UI reflects them
+- **Duplicate peer entries after pairing**: `send_chat` pinned trust under
+  `ip:port` while the receive path pinned plain `ip`, showing the same device
+  twice; both now converge on plain `ip` on LAN (legacy `ip:port` records are
+  migrated automatically; loopback keeps `ip:port` for test isolation)
+- **Duplicate chat delivery**: incoming chat messages are now deduplicated by
+  message id, so multi-path relays can't show the same message twice
 - **WS bridge swallowed no-op `settings:apply`** (no reply at all) and
   coerced non-bool `autoAccept` values (`bool("no")` is `True`) — now every
   request is answered and field types are validated strictly
@@ -48,6 +86,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `run_all.sh` counts a crashed suite as a failure instead of letting it
   read as green
+- Test suite runs on Windows/Python 3.14: `t_attacks`/`t_lan_auth` fall back
+  to `netstat -ano` where `ss` is unavailable; `t_upload`/`t_download` use
+  `asyncio.run` (the removed `asyncio.get_event_loop()` bootstrap raised on
+  3.12+) — full suite now green natively on Windows via `run_all.ps1`
 - Dead `device:removed` WS case removed (mirrors undocumented reality;
   see `docs/protocol.md` §6.5)
 

@@ -33,7 +33,7 @@ the lifetime of the identity (`backend/main.py:37`).
 |---|---|---|---|
 | WS control plane | **18973** | `SYNCFLOW_WS_PORT` | `127.0.0.1` by default; `SYNCFLOW_WS_HOST=0.0.0.0` opts into **LAN mode** (`ws_bridge.py:43-45`) |
 | TCP data plane | **18974** | `SYNCFLOW_TCP_PORT` | always `0.0.0.0` (`networking/__init__.py:20`) |
-| mDNS advertisement | = TCP port | — | advertises the TCP port; TXT records carry `id`, `name`, `mac`, `os`, `port` |
+| mDNS advertisement | = TCP port | — | advertises the TCP port; TXT records carry `id`, `name`, `mac` (pseudonym), `os`, `port` |
 
 The Electron main process discovers the WS port from the backend's
 `SYNCFLOW_PORT:<n>` banner (5 s wait, fallback 18973) and connects to
@@ -88,7 +88,11 @@ decision 90 s, stream 120 s (`engine.py:29-33`). Server concurrency:
 - mDNS service type **`_syncflow._tcp.local.`**
   (`discovery/mdns.py:10`), instance name `{hostname}-{id[:8]}`, SRV host
   `{instance}.local.`, A record = primary LAN IP, port = TCP port.
-- TXT records: `id` (device ID), `name`, `mac`, `os`, `port`. All fields are
+- TXT records: `id` (device ID), `name`, `mac`, `os`, `port`. `mac` is a
+  **locally-administered pseudonym** derived from the device id
+  (`device.py:pseudo_mac`) — the hardware MAC is never advertised, so LAN
+  observers cannot OUI-lookup the vendor or track the machine across
+  networks. All fields are
   re-validated with strict regexes on receive (`mdns.py:115-157`); TXT data
   is **never trusted** — it only populates the device list. Own
   advertisements are filtered out.
@@ -143,7 +147,7 @@ Facts:
 
 ## 6. Control-plane message catalogue (WS)
 
-### 6.1 Request → reply handlers (`main.py:81-93`)
+### 6.1 Request → reply handlers (`main.py:_register_handlers`)
 
 | Client → backend | Reply | Notes |
 |---|---|---|
@@ -151,13 +155,16 @@ Facts:
 | `command:cancel {transferId}` | `transfer:cancelled {transferId, success}` | cancels engine task, staged upload, or companion download |
 | `devices:list` | `devices:update {devices}` | mDNS peers minus self |
 | `transfers:list` | `transfers:update {active, completed}` | last **20** completed |
-| `chat:send {text}` | `chat:ack {messageId, hash}` + broadcast `chat:message`, or `chat:error` | ≤4000 chars, printable + `\n\t` |
+| `chat:send {text}` | `chat:ack {messageId, hash}` + broadcast `chat:message`, or `chat:error` | ≤4000 chars, printable + `\n\t`; delivery to peers is asynchronous via the outbox (retries with backoff, §6.5 pushes) |
 | `chat:history` | `chat:history {messages}` | last **100** |
 | `identity:get` | `identity:info {signingPub, x25519Pub, deviceId, deviceName}` | |
 | `identity:sas {peerDeviceId}` | `identity:sas {peerDeviceId, codes[16], hash}` \| `error "Invalid device id"` | §10.4 |
 | `settings:apply {…}` | `settings:applied` \| `error` | Always answered, even for no-ops (never silent); strict field types (`autoAccept` must be a bool, `syncFolders`/`downloadPath` correct shapes → `error`); downloadPath must be `$HOME`-confined; `syncFolders` ≤50, home-confined |
 | `peers:list` | `peers:list {peers}` | pins as `{key, name, deviceId, firstSeen, lastSeen}` (`pub` stripped) |
 | `peers:forget {key}` | `peers:updated {key, success, peers}` \| `error` | drops a TOFU pin |
+| `peers:add {ip, port?, deviceId?, name?}` | `peers:added {peer}` \| `error` | registers a manual relay target in `known_peers.json` (0600); host `^[A-Za-z0-9.\-:]{1,64}$` without `:`, port 1-65535 (default 18974); chat outbox attaches pending messages to the new target |
+| `peers:remove {ip, port?}` | `peers:removed {addr, success}` \| `error` | drops a manual relay target (no-op ⇒ `success:false`) |
+| `diag:probe {ip, port?}` | `diag:result {ok, ip, port, latencyMs?, error?}` | connection doctor: TCP connect to the transfer port, 3 s timeout, latency in ms |
 | `transfer:approve {transferId, files?}` | `transfer:decision {transferId, approved:true, success}` | resolves pending receiver approval; `files` = **subset approval**: non-empty list of unique non-negative ints (≤1000), else `error "Invalid file selection"`; range vs the declared file count is checked by the engine (out-of-range ⇒ the engine declines) |
 | `transfer:decline {transferId}` | `transfer:decision {…approved:false…}` | same handler |
 
@@ -185,7 +192,11 @@ everything else → `auth_required`.
 `transfer:progress` (≥0.5 s apart), `transfer:complete {transferId,
 error?, verified}`, `transfer:error {transferId, error}`,
 `transfer:cancelled`, `chat:message {id, fromDevice, deviceId, text,
-timestamp, hash}`, `device:connected {device}` / `device:disconnected
+timestamp, hash}`, `chat:delivered {messageId, target}` /
+`chat:failed {messageId, target?, reason}` (chat outbox outcome per relay
+target — `delivered` is final even if another target later fails),
+`diag:result {…}` (reply is also pushed to every connected client),
+`device:connected {device}` / `device:disconnected
 {deviceId}`, `transfer:new` (companion-staged uploads handed to the engine).
 
 > There is no `device:removed` and no `sync:*` family: device lists are

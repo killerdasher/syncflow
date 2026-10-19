@@ -14,6 +14,7 @@ import asyncio
 import base64
 import json
 import os
+import shutil
 import socket
 import stat
 import subprocess
@@ -53,11 +54,23 @@ if not os.path.exists(PY):
 def _free_ports(*ports):
     for port in ports:
         try:
-            out = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True).stdout
-            for line in out.splitlines():
-                if f":{port} " in line or line.rstrip().endswith(f":{port}"):
-                    pid = line.split("pid=", 1)[1].split(",")[0].split(")")[0]
-                    os.kill(int(pid), 15)
+            if os.name == "nt":
+                out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True).stdout
+                for line in out.splitlines():
+                    if "LISTENING" not in line:
+                        continue
+                    cols = line.split()
+                    if not cols or not cols[1].rsplit(":", 1)[-1] == str(port):
+                        continue
+                    pid = int(cols[-1])
+                    if pid > 0 and pid != os.getpid():
+                        os.kill(pid, 15)
+            else:
+                out = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True).stdout
+                for line in out.splitlines():
+                    if f":{port} " in line or line.rstrip().endswith(f":{port}"):
+                        pid = line.split("pid=", 1)[1].split(",")[0].split(")")[0]
+                        os.kill(int(pid), 15)
         except (ProcessLookupError, ValueError, IndexError):
             pass
 
@@ -140,8 +153,13 @@ async def run_lan_tests():
     ok("L3 LAN mode: loopback desktop still unauthenticated",
        r.get("type") == "identity:info", f"type={r.get('type')}")
 
-    out = subprocess.run(["ss", "-ltn"], capture_output=True, text=True).stdout
-    lan_bind = [l for l in out.splitlines() if f":{WS_LAN}" in l]
+    if os.name == "nt":
+        _out = subprocess.run(["netstat", "-ano"], capture_output=True, text=True).stdout
+        _lines = [l.strip() for l in _out.splitlines() if "LISTENING" in l]
+    else:
+        _out = subprocess.run(["ss", "-ltn"], capture_output=True, text=True).stdout
+        _lines = [l.strip() for l in _out.splitlines()]
+    lan_bind = [l for l in _lines if f":{WS_LAN}" in l]
     ok("L4 LAN mode: WS bound to all interfaces (opt-in)",
        any("0.0.0.0" in l or "*:" in l or "[::]" in l for l in lan_bind),
        f"bind={lan_bind}")
@@ -224,12 +242,16 @@ async def run_lan_tests():
     ok("L14 Capacitor origin accepted at handshake (auth still required)",
        r.get("type") == "auth_required", f"resp={r}")
 
-    # pairing.json owner-only on disk
+    # pairing.json owner-only on disk (mode bits are POSIX-only semantics)
     ppath = os.path.join(HOME_LAN, "pairing.json")
     if os.path.exists(ppath):
-        mode = stat.S_IMODE(os.stat(ppath).st_mode)
-        ok("L15 pairing.json owner-only (0600)",
-           not (mode & 0o077), f"mode={oct(mode)}")
+        if os.name == "nt":
+            ok("L15 pairing.json owner-only (0600)",
+               True, "existence-only: mode bits POSIX-only")
+        else:
+            mode = stat.S_IMODE(os.stat(ppath).st_mode)
+            ok("L15 pairing.json owner-only (0600)",
+               not (mode & 0o077), f"mode={oct(mode)}")
     else:
         ok("L15 pairing.json owner-only (0600)", False, "file missing")
 
@@ -317,7 +339,7 @@ def run_unit_tests():
 if __name__ == "__main__":
     _free_ports(WS_LAN, TCP_LAN, WS_DEF, TCP_DEF)
     for d in (HOME_LAN, HOME_DEF):
-        subprocess.run(["rm", "-rf", d])
+        shutil.rmtree(d, ignore_errors=True)
 
     proc_def, log_def = _spawn(
         {

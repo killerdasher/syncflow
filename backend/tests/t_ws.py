@@ -267,6 +267,78 @@ def w9_chat_relay(a_device_placeholder=None):
     )
 
 
+def w19_peers_add_remove():
+    async def go():
+        good = await ws_call(
+            WS_A, {"type": "peers:add", "ip": "127.0.0.1", "port": 19999, "name": "Manual Peer"},
+            {"peers:added", "error"},
+        )
+        bad_ip = await ws_call(
+            WS_A, {"type": "peers:add", "ip": "not an ip!", "port": 19999}, {"error"},
+        )
+        bad_port = await ws_call(
+            WS_A, {"type": "peers:add", "ip": "127.0.0.1", "port": 99999}, {"error"},
+        )
+        rm = await ws_call(
+            WS_A, {"type": "peers:remove", "ip": "127.0.0.1", "port": 19999}, {"peers:removed", "error"},
+        )
+        rm_again = await ws_call(
+            WS_A, {"type": "peers:remove", "ip": "127.0.0.1", "port": 19999}, {"peers:removed", "error"},
+        )
+        return good, bad_ip, bad_port, rm, rm_again
+
+    good, bad_ip, bad_port, rm, rm_again = asyncio.run(go())
+    peer = good.get("peer") or {}
+    ok(
+        "W19 peers:add/remove: valid peer registered+removed, invalid rejected",
+        good.get("type") == "peers:added"
+        and peer.get("ip") == "127.0.0.1" and peer.get("port") == 19999
+        and peer.get("name") == "Manual Peer"
+        and bad_ip.get("type") == "error"
+        and bad_port.get("type") == "error"
+        and rm.get("type") == "peers:removed" and rm.get("success") is True
+        and rm_again.get("type") == "peers:removed" and rm_again.get("success") is False,
+        f"good={good.get('type')} bad_ip={bad_ip.get('type')} bad_port={bad_port.get('error')!r} "
+        f"rm={rm.get('success')} rm2={rm_again.get('success')}",
+    )
+
+
+def w20_diag_probe():
+    async def go():
+        live = await ws_call(WS_A, {"type": "diag:probe", "ip": "127.0.0.1", "port": TCP_A}, {"diag:result"})
+        dead = await ws_call(WS_A, {"type": "diag:probe", "ip": "127.0.0.1", "port": 19999}, {"diag:result"})
+        bogus = await ws_call(WS_A, {"type": "diag:probe", "ip": "nope!!", "port": 18974}, {"diag:result"})
+        return live, dead, bogus
+
+    live, dead, bogus = asyncio.run(go())
+    ok(
+        "W20 diag:probe: live port ok, dead port fails, bad address refused",
+        live.get("ok") is True and isinstance(live.get("latencyMs"), (int, float))
+        and dead.get("ok") is False and bool(dead.get("error"))
+        and bogus.get("ok") is False and "address" in str(bogus.get("error", "")).lower(),
+        f"live={live} dead={dead.get('ok')}/{dead.get('error')!r} bogus={bogus.get('error')!r}",
+    )
+
+
+def w21_chat_delivered_feedback():
+    async def go():
+        async with WSConn(WS_A) as aws, WSConn(WS_B) as bws:
+            await aws.send({"type": "chat:send", "text": "delivered-feedback-21", "fromDevice": "A"})
+            ack = await aws.wait("chat:ack", 6)
+            delivered = await aws.wait("chat:delivered", 15)
+            msg = await bws.wait("chat:message", 12)
+            return ack, delivered, msg
+
+    ack, delivered, msg = asyncio.run(go())
+    ok(
+        "W21 chat:delivered push matches ack messageId after E2E relay",
+        delivered.get("messageId") == ack.get("messageId")
+        and bool(delivered.get("target"))
+        and msg.get("text") == "delivered-feedback-21",
+        f"ack={ack.get('messageId')} delivered={delivered} msg={msg.get('text')!r}",
+    )
+
+
 def start_raw_send(wire, path):
     box = {}
 
@@ -474,6 +546,9 @@ def main():
     w14_unknown_approval()
     w15_stable_identity()
     w9_chat_relay()
+    w19_peers_add_remove()
+    w20_diag_probe()
+    w21_chat_delivered_feedback()
     w10_approve_accept()
     w11_approve_decline()
     w12_cancel_awaiting()
